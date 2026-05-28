@@ -12,7 +12,7 @@ the real serial device are sent to the pseudo terminal and all Unix socket
 clients. Bytes received from the pseudo terminal or socket clients are sent to
 the real serial device.
 """
-
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -35,6 +35,9 @@ except ModuleNotFoundError:
     termios = None
 
 SUPPORTED_BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400)
+
+RP_CMD_INIT = 0xAE
+RP_CMD_INIT_MAGIC = 0xCE
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -66,6 +69,7 @@ class Bridge:
         write_lock_ms: int,
         pty_priority_ms: int,
         verbose: bool,
+        handshake_timeout_sec: float,
     ):
         self.serial_path = serial_path
         self.pty_link = pty_link
@@ -74,6 +78,8 @@ class Bridge:
         self.write_lock_seconds = write_lock_ms / 1000.0
         self.pty_priority_seconds = pty_priority_ms / 1000.0
         self.verbose = verbose
+        self.handshake_timeout_sec = handshake_timeout_sec
+
         self.selector = selectors.DefaultSelector()
         self.running = True
         self.clients: dict[int, Endpoint] = {}
@@ -91,12 +97,42 @@ class Bridge:
 
     def setup(self) -> None:
         self.serial = Endpoint("serial", self.open_serial())
+
+        # SPIKE側 main_task は AE CE を受け取るまで通常コマンド処理に入らない
+        self.handshake_spike()
+
         self.ptym = Endpoint("pty", self.open_pty())
         self.server = self.open_unix_server()
 
         self.selector.register(self.serial.fd, selectors.EVENT_READ, self.serial)
         self.selector.register(self.ptym.fd, selectors.EVENT_READ, self.ptym)
         self.selector.register(self.server, selectors.EVENT_READ, "server")
+
+    def handshake_spike(self) -> None:
+        assert self.serial is not None
+
+        os.write(self.serial.fd, bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]))
+
+        deadline = time.monotonic() + self.handshake_timeout_sec
+        buf = bytearray()
+
+        while time.monotonic() < deadline and len(buf) < 5:
+            try:
+                chunk = os.read(self.serial.fd, 5 - len(buf))
+                if chunk:
+                    buf.extend(chunk)
+                    continue
+            except BlockingIOError:
+                pass
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+            time.sleep(0.01)
+
+        if len(buf) != 5 or buf[0] != RP_CMD_INIT or buf[1] != RP_CMD_INIT_MAGIC:
+            raise RuntimeError(f"SPIKE handshake failed: {buf.hex()}")
+
+        self.log(f"SPIKE handshake ok: {buf.hex()}")
 
     def open_serial(self) -> int:
         fd = os.open(self.serial_path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
@@ -106,12 +142,11 @@ class Bridge:
 
     def configure_serial(self, fd: int, baud: int) -> None:
         assert termios is not None
-        baud_rates = termios_baud_rates()
-        attrs = termios.tcgetattr(fd)
-        speed = baud_rates.get(baud)
+        speed = termios_baud_rates().get(baud)
         if speed is None:
             raise ValueError(f"unsupported baud rate: {baud}")
 
+        attrs = termios.tcgetattr(fd)
         attrs[0] = 0
         attrs[1] = 0
         attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
@@ -152,6 +187,7 @@ class Bridge:
                 path.unlink()
             else:
                 raise FileExistsError(f"{self.socket_path} exists and is not a socket")
+
         path.parent.mkdir(parents=True, exist_ok=True)
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -218,8 +254,10 @@ class Bridge:
             elif self.pty_has_priority():
                 self.log(f"dropped {len(data)} bytes from {endpoint.name}: pty priority is active")
                 return
+
             if not self.acquire_serial_writer(endpoint, len(data)):
                 return
+
             assert self.serial is not None
             self.queue_write(self.serial, data)
 
@@ -232,9 +270,11 @@ class Bridge:
         now = time.monotonic()
         if self.serial_writer_fd is None or now >= self.serial_writer_until:
             self.serial_writer_fd = endpoint.fd
+
         if self.serial_writer_fd != endpoint.fd:
             self.log(f"dropped {data_len} bytes from {endpoint.name}: serial write lock is busy")
             return False
+
         self.serial_writer_until = now + self.write_lock_seconds
         return True
 
@@ -248,6 +288,7 @@ class Bridge:
         if not endpoint.buffer:
             self.update_interest(endpoint)
             return
+
         try:
             written = os.write(endpoint.fd, endpoint.buffer)
         except OSError as exc:
@@ -255,6 +296,7 @@ class Bridge:
                 return
             self.close_endpoint(endpoint)
             return
+
         del endpoint.buffer[:written]
         self.update_interest(endpoint)
 
@@ -270,15 +312,19 @@ class Bridge:
     def close_endpoint(self, endpoint: Endpoint) -> None:
         if endpoint is self.serial or endpoint is self.ptym:
             self.running = False
+
         self.clients.pop(endpoint.fd, None)
+
         try:
             self.selector.unregister(endpoint.fd)
         except (KeyError, ValueError, OSError):
             pass
+
         try:
             os.close(endpoint.fd)
         except OSError:
             pass
+
         self.log(f"closed {endpoint.name}")
 
     def cleanup(self) -> None:
@@ -288,17 +334,20 @@ class Bridge:
                     os.close(endpoint.fd)
                 except OSError:
                     pass
+
         if self.server is not None:
             try:
                 self.selector.unregister(self.server)
             except Exception:
                 pass
             self.server.close()
+
         if self.pty_slave_fd is not None:
             try:
                 os.close(self.pty_slave_fd)
             except OSError:
                 pass
+
         for path in [self.pty_link, self.socket_path]:
             try:
                 p = Path(path)
@@ -313,37 +362,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--serial", default="/dev/USB_SPIKE", help="real SPIKE serial device")
     parser.add_argument("--pty-link", default="/tmp/raspike-tty", help="symlink exposed to libraspike")
     parser.add_argument("--unix-socket", default="/tmp/raspike.sock", help="raw protocol Unix socket path")
-    parser.add_argument("--baud", type=int, default=115200, choices=SUPPORTED_BAUD_RATES, help="serial baud rate")
-    parser.add_argument(
-        "--write-lock-ms",
-        type=int,
-        default=20,
-        help="minimum time window that one input source owns serial writes",
-    )
-    parser.add_argument(
-        "--pty-priority-ms",
-        type=int,
-        default=200,
-        help="drop Unix-socket writes while libraspike/PTY has written recently",
-    )
-    parser.add_argument("-v", "--verbose", action="store_true", help="print bridge events")
+    parser.add_argument("--baud", type=int, default=115200, choices=SUPPORTED_BAUD_RATES)
+    parser.add_argument("--write-lock-ms", type=int, default=20)
+    parser.add_argument("--pty-priority-ms", type=int, default=200)
+    parser.add_argument("--handshake-timeout-sec", type=float, default=2.0)
+    parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+
     if pty is None or termios is None:
-        print("raspike_bridge.py requires a POSIX/Linux Python with pty and termios modules.", file=sys.stderr)
+        print("raspike_bridge.py requires POSIX/Linux Python.", file=sys.stderr)
         return 2
 
     bridge = Bridge(
-        args.serial,
-        args.pty_link,
-        args.unix_socket,
-        args.baud,
-        args.write_lock_ms,
-        args.pty_priority_ms,
-        args.verbose,
+        serial_path=args.serial,
+        pty_link=args.pty_link,
+        socket_path=args.unix_socket,
+        baud=args.baud,
+        write_lock_ms=args.write_lock_ms,
+        pty_priority_ms=args.pty_priority_ms,
+        verbose=args.verbose,
+        handshake_timeout_sec=args.handshake_timeout_sec,
     )
 
     def stop(_signum: int, _frame: object) -> None:
@@ -360,6 +402,7 @@ def main() -> int:
         bridge.run()
     finally:
         bridge.cleanup()
+
     return 0
 
 
