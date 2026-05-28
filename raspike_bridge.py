@@ -69,6 +69,7 @@ class Bridge:
         write_lock_ms: int,
         pty_priority_ms: int,
         pty_mode: int,
+        spike_handshake: bool,
         verbose: bool,
         handshake_timeout_sec: float,
     ):
@@ -79,6 +80,7 @@ class Bridge:
         self.write_lock_seconds = write_lock_ms / 1000.0
         self.pty_priority_seconds = pty_priority_ms / 1000.0
         self.pty_mode = pty_mode
+        self.spike_handshake = spike_handshake
         self.verbose = verbose
         self.handshake_timeout_sec = handshake_timeout_sec
 
@@ -100,8 +102,8 @@ class Bridge:
     def setup(self) -> None:
         self.serial = Endpoint("serial", self.open_serial())
 
-        # SPIKE側 main_task は AE CE を受け取るまで通常コマンド処理に入らない
-        self.handshake_spike()
+        if self.spike_handshake:
+            self.handshake_spike()
 
         self.ptym = Endpoint("pty", self.open_pty())
         self.server = self.open_unix_server()
@@ -369,6 +371,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-lock-ms", type=int, default=20)
     parser.add_argument("--pty-priority-ms", type=int, default=200)
     parser.add_argument("--pty-mode", type=lambda value: int(value, 8), default=0o666)
+    parser.add_argument("--spike-handshake", action="store_true")
     parser.add_argument("--handshake-timeout-sec", type=float, default=2.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -389,6 +392,7 @@ def main() -> int:
         write_lock_ms=args.write_lock_ms,
         pty_priority_ms=args.pty_priority_ms,
         pty_mode=args.pty_mode,
+        spike_handshake=args.spike_handshake,
         verbose=args.verbose,
         handshake_timeout_sec=args.handshake_timeout_sec,
     )

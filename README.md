@@ -49,13 +49,18 @@ Start the bridge:
 ```bash
 python3 raspike_bridge.py \
   --serial /dev/USB_SPIKE \
-  --pty-link /tmp/raspike-tty \
+  --pty-link "$HOME/raspike-tty" \
   --unix-socket /tmp/raspike.sock \
   --pty-priority-ms 200 \
   -v
 ```
 
-Point existing `libraspike` code at `/tmp/raspike-tty`.
+Point existing `libraspike` code at `$HOME/raspike-tty`.
+
+When `libraspike` is connected through the PTY, do not pass
+`--spike-handshake`; `libraspike` performs the SPIKE `AE CE` startup handshake
+itself. Use `--spike-handshake` only when running socket clients without
+`libraspike`.
 
 Start PS5 control:
 
@@ -108,4 +113,3 @@ python3 ps5_raspike_control.py --drive-style arcade
 The bridge gives `libraspike` priority by default. When PTY traffic has been
 seen recently, Unix socket writes are dropped for a short window, controlled by
 `--pty-priority-ms`.
-
