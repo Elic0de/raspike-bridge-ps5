@@ -72,7 +72,6 @@ python3 ps5_raspike_control.py \
   --right-port A \
   --max-power 60 \
   --config ./ps5_controller.yaml \
-  --keyboard \
   -v
 ```
 
@@ -85,7 +84,11 @@ python3 ps5_raspike_control.py --event-device /dev/input/eventX
 Controller can now be connected after process start. The app waits and
 auto-reconnects when DualSense appears.
 
-Keyboard control is optional with `--keyboard`:
+When standard input is an interactive terminal, keyboard control is enabled
+automatically. Gamepad and keyboard can be used together; if the controller is
+not connected, keyboard input continues to work as the fallback. Use
+`--keyboard` to force keyboard input, or `--no-keyboard-fallback` to disable
+automatic keyboard input.
 
 ```text
 W/A/S/D : throttle/steer

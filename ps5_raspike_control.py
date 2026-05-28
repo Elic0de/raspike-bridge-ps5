@@ -102,7 +102,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-file", default="/tmp/raspike-ps5-events.jsonl")
     parser.add_argument("--config", default="ps5_controller.yaml")
     parser.add_argument("--configure", action="store_true")
-    parser.add_argument("--keyboard", action="store_true")
+    parser.add_argument("--keyboard", action="store_true", help="force keyboard input even when stdin is not auto-detected")
+    parser.add_argument("--no-keyboard-fallback", action="store_true", help="disable automatic keyboard input")
     parser.add_argument("--wait-controller-sec", type=float, default=1.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -134,8 +135,12 @@ def main() -> int:
         slew_rate=cfg.power.slew_rate,
     )
 
+    keyboard_enabled = args.keyboard or (not args.no_keyboard_fallback and sys.stdin.isatty())
+    if keyboard_enabled:
+        print("keyboard input enabled: gamepad and keyboard can be used together")
+
     gamepad = GamepadProvider(args.event_device, cfg)
-    with KeyboardProvider(enabled=args.keyboard, cfg=cfg) as keyboard:
+    with KeyboardProvider(enabled=keyboard_enabled, cfg=cfg) as keyboard:
         last_tick_at = time.monotonic()
         next_controller_probe_at = 0.0
         try:
