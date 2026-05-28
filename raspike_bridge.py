@@ -68,6 +68,7 @@ class Bridge:
         baud: int,
         write_lock_ms: int,
         pty_priority_ms: int,
+        pty_mode: int,
         verbose: bool,
         handshake_timeout_sec: float,
     ):
@@ -77,6 +78,7 @@ class Bridge:
         self.baud = baud
         self.write_lock_seconds = write_lock_ms / 1000.0
         self.pty_priority_seconds = pty_priority_ms / 1000.0
+        self.pty_mode = pty_mode
         self.verbose = verbose
         self.handshake_timeout_sec = handshake_timeout_sec
 
@@ -162,10 +164,11 @@ class Bridge:
         master_fd, slave_fd = pty.openpty()
         slave_name = os.ttyname(slave_fd)
         self.configure_pty(slave_fd)
+        os.chmod(slave_name, self.pty_mode)
         os.set_blocking(master_fd, False)
         self.pty_slave_fd = slave_fd
         self.replace_symlink(self.pty_link, slave_name)
-        self.log(f"created pty: {self.pty_link} -> {slave_name}")
+        self.log(f"created pty: {self.pty_link} -> {slave_name} mode={self.pty_mode:o}")
         return master_fd
 
     def configure_pty(self, fd: int) -> None:
@@ -365,6 +368,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baud", type=int, default=115200, choices=SUPPORTED_BAUD_RATES)
     parser.add_argument("--write-lock-ms", type=int, default=20)
     parser.add_argument("--pty-priority-ms", type=int, default=200)
+    parser.add_argument("--pty-mode", type=lambda value: int(value, 8), default=0o666)
     parser.add_argument("--handshake-timeout-sec", type=float, default=2.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -384,6 +388,7 @@ def main() -> int:
         baud=args.baud,
         write_lock_ms=args.write_lock_ms,
         pty_priority_ms=args.pty_priority_ms,
+        pty_mode=args.pty_mode,
         verbose=args.verbose,
         handshake_timeout_sec=args.handshake_timeout_sec,
     )
