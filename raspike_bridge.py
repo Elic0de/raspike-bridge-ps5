@@ -38,6 +38,7 @@ SUPPORTED_BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400)
 
 RP_CMD_INIT = 0xAE
 RP_CMD_INIT_MAGIC = 0xCE
+SPIKE_VERSION = bytes([0, 0, 6])
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -254,6 +255,10 @@ class Bridge:
             for client in list(self.clients.values()):
                 self.queue_write(client, data)
         else:
+            data = self.swallow_client_handshake(endpoint, data)
+            if not data:
+                return
+
             if endpoint is self.ptym:
                 self.last_pty_write_at = time.monotonic()
             elif self.pty_has_priority():
@@ -265,6 +270,17 @@ class Bridge:
 
             assert self.serial is not None
             self.queue_write(self.serial, data)
+
+    def swallow_client_handshake(self, endpoint: Endpoint, data: bytes) -> bytes:
+        if len(data) < 2:
+            return data
+        if data[0] != RP_CMD_INIT or data[1] != RP_CMD_INIT_MAGIC:
+            return data
+
+        response = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]) + SPIKE_VERSION
+        self.queue_write(endpoint, response)
+        self.log(f"proxy handshake for {endpoint.name}: req={data[:2].hex()} resp={response.hex()}")
+        return data[2:]
 
     def pty_has_priority(self) -> bool:
         if self.pty_priority_seconds <= 0:

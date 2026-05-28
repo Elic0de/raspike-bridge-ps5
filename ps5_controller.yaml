@@ -1,0 +1,48 @@
+bindings:
+  combos:
+    - keys: [BTN_TL, BTN_TR]
+      action: toggle_safe_mode
+
+  BTN_SOUTH:
+    press:
+      action: emergency_stop
+    hold:
+      duration_ms: 1500
+      action: shutdown
+
+  BTN_NORTH:
+    press:
+      action: gyro_reset
+
+  BTN_START:
+    press:
+      action: start
+
+  BTN_EAST:
+    press:
+      action: coast_stop
+
+  space:
+    press:
+      action: emergency_stop
+  r:
+    press:
+      action: gyro_reset
+  enter:
+    press:
+      action: start
+  c:
+    press:
+      action: coast_stop
+
+input:
+  deadzone: 0.06
+  steering_curve: 2.1
+  throttle_curve: 1.7
+  steering_gain: 0.78
+  steering_return_speed: 4.5
+  low_speed_steer_gain: 1.0
+  high_speed_steer_gain: 0.36
+
+power:
+  slew_rate: 180

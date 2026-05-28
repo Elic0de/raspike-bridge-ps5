@@ -16,6 +16,7 @@ raspike_bridge.py -> /dev/USB_SPIKE -> RasPike firmware
        ^
        |
 ps5_raspike_control.py
+ps5_controller/
 ```
 
 The bridge keeps the existing `libraspike` serial protocol intact while allowing
@@ -70,6 +71,8 @@ python3 ps5_raspike_control.py \
   --left-port B \
   --right-port A \
   --max-power 60 \
+  --config ./ps5_controller.yaml \
+  --keyboard \
   -v
 ```
 
@@ -79,34 +82,35 @@ If auto-detection fails:
 python3 ps5_raspike_control.py --event-device /dev/input/eventX
 ```
 
+Controller can now be connected after process start. The app waits and
+auto-reconnects when DualSense appears.
+
+Keyboard control is optional with `--keyboard`:
+
+```text
+W/A/S/D : throttle/steer
+space   : emergency stop / brake
+r       : gyro reset
+Enter   : start
+c       : motor stop / coast
+```
+
 ## Controls
 
 ```text
+L stick : steering
+R2      : accelerator
+L2      : brake / reverse
 X       : emergency stop / brake
 Circle  : motor stop / coast
 Triangle: gyro heading reset
-Square  : log mark / save
-L stick : steering
-R2/L2   : accelerator / brake-reverse
-R1/L1   : increase/decrease power limit
-D-pad   : experiment mode selection
-OPTIONS : selected experiment start
-SHARE   : cancel / return idle
+Options : manual start
+L1+R1   : toggle safe mode
 ```
 
-Default driving style is car-like:
-
-```text
-R2      : accelerator
-L2      : brake / reverse
-L stick : steering
-```
-
-For L-stick-only arcade driving:
-
-```bash
-python3 ps5_raspike_control.py --drive-style arcade
-```
+The default input tuning in `ps5_controller.yaml` is GTA5-like: trigger
+throttle/brake, left-stick steering, softer high-speed steering, and smoothed
+power changes.
 
 ## Notes
 
