@@ -47,6 +47,14 @@ class AxisState:
         value = max(-1.0, min(1.0, (self.value - center) / half_span))
         return 0.0 if abs(value) < deadzone else value
 
+    def normalized_around(self, center: int, deadzone: float) -> float:
+        if self.value >= center:
+            span = max(self.maximum - center, 1)
+        else:
+            span = max(center - self.minimum, 1)
+        value = max(-1.0, min(1.0, (self.value - center) / span))
+        return 0.0 if abs(value) < deadzone else value
+
     def trigger(self) -> float:
         span = max(self.maximum - self.minimum, 1)
         return max(0.0, min(1.0, (self.value - self.minimum) / span))
@@ -169,7 +177,7 @@ def configure_motors(sock: socket.socket, left_port: int, right_port: int) -> No
     send_and_wait_ack(sock, left_port, RP_CMD_ID_MOT_CFG, motor_config_packet(left_port), "MOT_CFG left")
     send_and_wait_ack(sock, right_port, RP_CMD_ID_MOT_CFG, motor_config_packet(right_port), "MOT_CFG right")
 
-    send_and_wait_ack(sock, left_port, RP_CMD_ID_MOT_STU, motor_setup_packet(left_port, direction=0), "MOT_STU left")
+    send_and_wait_ack(sock, left_port, RP_CMD_ID_MOT_STU, motor_setup_packet(left_port, direction=1), "MOT_STU left")
     send_and_wait_ack(sock, right_port, RP_CMD_ID_MOT_STU, motor_setup_packet(right_port, direction=0), "MOT_STU right")
 
 def drain_socket(sock: socket.socket) -> None:
@@ -245,6 +253,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deadzone", type=float, default=0.08)
     parser.add_argument("--rate-hz", type=float, default=30.0)
     parser.add_argument("--drive-style", choices=("car", "arcade"), default="car")
+    parser.add_argument("--steering-center", type=int, default=127)
     parser.add_argument("--steering-curve", type=float, default=1.6)
     parser.add_argument("--throttle-curve", type=float, default=1.4)
     parser.add_argument("--idle-steer-scale", type=float, default=0.25)
@@ -352,7 +361,7 @@ def main() -> int:
                 continue
 
             axis_x = axes.get(ecodes.ABS_X, AxisState())
-            steering = curve(axis_x.normalized(args.deadzone), args.steering_curve)
+            steering = curve(axis_x.normalized_around(args.steering_center, args.deadzone), args.steering_curve)
 
             if args.drive_style == "car":
                 accelerator = axes.get(ecodes.ABS_RZ, AxisState(minimum=0, maximum=255)).trigger()
