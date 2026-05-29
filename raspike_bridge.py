@@ -441,12 +441,21 @@ class Bridge:
                     )
 
     def filter_config_frames(self, endpoint: Endpoint, data: bytes) -> bytes:
-        """Forward client frames to the serial, proxying duplicate *_CFG ACKs.
+        """
+        Forward client frames to the serial, proxying duplicate *_CFG ACKs.
 
-        The first config for a (port, cmd) is forwarded to the real SPIKE and
-        remembered. Any later config for that pair (e.g. a re-run of a
-        libraspike-art program) is answered locally so the firmware does not
-        re-grab the port and raise its assert.
+        Configured (port, cmd) pairs are learned from both forwarded config
+        commands and SPIKE ALL_STATUS frames.
+
+        Unknown configs are forwarded to the real SPIKE. If a port is already
+        known to be configured, the bridge responds with a proxied ACK instead
+        of forwarding the config command again. This prevents the firmware from
+        re-grabbing an already configured device and triggering its duplicate
+        configuration assert.
+
+        This also allows the bridge to attach to an already-running SPIKE
+        program and safely handle MOT_CFG requests for ports that were
+        configured before the bridge started.
         """
         endpoint.parse_buf.extend(data)
         buf = endpoint.parse_buf
