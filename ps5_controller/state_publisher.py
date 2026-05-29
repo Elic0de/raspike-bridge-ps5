@@ -8,7 +8,7 @@ from pathlib import Path
 from .protocol import RP_CMD_INIT, RP_CMD_INIT_MAGIC, motor_power_packet
 
 _HANDSHAKE_TIMEOUT = 3.0
-_HANDSHAKE_RESPONSE_LEN = 5
+_VERSION_LEN = 3
 
 
 class StatePublisher:
@@ -22,16 +22,32 @@ class StatePublisher:
         self.log_path = Path(log_file)
 
     def _handshake(self) -> None:
+        # The bridge multiplexes status frames onto this stream, so the
+        # INIT/MAGIC reply may not be the first bytes we see. Scan for the
+        # marker exactly like libraspike-art does, then drain the 3 version
+        # bytes that follow it.
         self.sock.settimeout(_HANDSHAKE_TIMEOUT)
         self.sock.sendall(bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]))
-        buf = bytearray()
-        while len(buf) < _HANDSHAKE_RESPONSE_LEN:
-            chunk = self.sock.recv(_HANDSHAKE_RESPONSE_LEN - len(buf))
-            if not chunk:
-                raise RuntimeError("bridge closed connection during handshake")
-            buf.extend(chunk)
-        if buf[0] != RP_CMD_INIT or buf[1] != RP_CMD_INIT_MAGIC:
-            raise RuntimeError(f"bridge handshake failed: {buf.hex()}")
+        deadline = time.monotonic() + _HANDSHAKE_TIMEOUT
+        saw_init = False
+        version_left = -1  # -1 until marker found, then counts down 3 bytes
+        try:
+            while time.monotonic() < deadline:
+                chunk = self.sock.recv(64)
+                if not chunk:
+                    raise RuntimeError("bridge closed connection during handshake")
+                for b in chunk:
+                    if version_left >= 0:
+                        version_left -= 1
+                        if version_left == 0:
+                            return
+                    elif saw_init and b == RP_CMD_INIT_MAGIC:
+                        version_left = _VERSION_LEN
+                    else:
+                        saw_init = b == RP_CMD_INIT
+        except socket.timeout:
+            pass
+        raise RuntimeError("bridge handshake timed out")
 
     def publish_power(self, left: int, right: int) -> None:
         self.sock.sendall(

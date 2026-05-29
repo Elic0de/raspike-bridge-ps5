@@ -22,6 +22,7 @@ import selectors
 import signal
 import socket
 import stat
+import struct
 import sys
 import time
 from dataclasses import dataclass, field
@@ -38,7 +39,21 @@ SUPPORTED_BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400)
 
 RP_CMD_INIT = 0xAE
 RP_CMD_INIT_MAGIC = 0xCE
+RP_CMD_START = 0xEA
+RP_CMD_ID_ACK = 0x02
 SPIKE_VERSION = bytes([0, 0, 6])
+
+# *_CFG commands (RP_CMD_TYPE_*<<5 | 0). The SPIKE firmware grabs the port
+# device on these and asserts (red LED) if the same port is configured twice.
+# Re-running a libraspike-art program would trigger that, so the bridge proxies
+# the ACK for ports it has already forwarded a config for.
+RP_CMD_ID_COL_CFG = 0x20
+RP_CMD_ID_FRC_CFG = 0x40
+RP_CMD_ID_MOT_CFG = 0x60
+RP_CMD_ID_US_CFG = 0x80
+CONFIG_COMMANDS = frozenset(
+    {RP_CMD_ID_COL_CFG, RP_CMD_ID_FRC_CFG, RP_CMD_ID_MOT_CFG, RP_CMD_ID_US_CFG}
+)
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -58,6 +73,7 @@ class Endpoint:
     name: str
     fd: int
     buffer: bytearray = field(default_factory=bytearray)
+    parse_buf: bytearray = field(default_factory=bytearray)
 
 
 class Bridge:
@@ -95,6 +111,9 @@ class Bridge:
         self.serial_writer_fd: int | None = None
         self.serial_writer_until = 0.0
         self.last_pty_write_at = 0.0
+        # (port, cmd) pairs whose config has already been forwarded to the real
+        # SPIKE. Subsequent configs for the same pair are answered locally.
+        self.configured_cmds: set[tuple[int, int]] = set()
 
     def log(self, message: str) -> None:
         if self.verbose:
@@ -251,11 +270,21 @@ class Bridge:
 
         if endpoint is self.serial:
             assert self.ptym is not None
-            self.queue_write(self.ptym, data)
+            # Fan out only complete frames so a proxied ACK (injected from the
+            # client path) can never land inside a half-written status frame.
+            endpoint.parse_buf.extend(data)
+            frames = self.extract_frames(endpoint.parse_buf)
+            if not frames:
+                return
+            self.queue_write(self.ptym, frames)
             for client in list(self.clients.values()):
-                self.queue_write(client, data)
+                self.queue_write(client, frames)
         else:
             data = self.swallow_client_handshake(endpoint, data)
+            if not data:
+                return
+
+            data = self.filter_config_frames(endpoint, data)
             if not data:
                 return
 
@@ -281,6 +310,65 @@ class Bridge:
         self.queue_write(endpoint, response)
         self.log(f"proxy handshake for {endpoint.name}: req={data[:2].hex()} resp={response.hex()}")
         return data[2:]
+
+    def extract_frames(self, buf: bytearray) -> bytes:
+        """Pull whole RasPike frames out of buf, leaving any partial tail behind."""
+        out = bytearray()
+        while buf:
+            if buf[0] != RP_CMD_START:
+                del buf[0]
+                continue
+            if len(buf) < 4:
+                break
+            total = 4 + buf[2]
+            if len(buf) < total:
+                break
+            out += buf[:total]
+            del buf[:total]
+        return bytes(out)
+
+    def filter_config_frames(self, endpoint: Endpoint, data: bytes) -> bytes:
+        """Forward client frames to the serial, proxying duplicate *_CFG ACKs.
+
+        The first config for a (port, cmd) is forwarded to the real SPIKE and
+        remembered. Any later config for that pair (e.g. a re-run of a
+        libraspike-art program) is answered locally so the firmware does not
+        re-grab the port and raise its assert.
+        """
+        endpoint.parse_buf.extend(data)
+        buf = endpoint.parse_buf
+        forward = bytearray()
+        while buf:
+            if buf[0] != RP_CMD_START:
+                del buf[0]
+                continue
+            if len(buf) < 4:
+                break
+            total = 4 + buf[2]
+            if len(buf) < total:
+                break
+            frame = bytes(buf[:total])
+            del buf[:total]
+
+            cmd = frame[1]
+            port = frame[3]
+            if cmd in CONFIG_COMMANDS and (port, cmd) in self.configured_cmds:
+                self.send_proxy_ack(endpoint, port, cmd)
+                self.log(f"proxy config ack for {endpoint.name}: port={port} cmd=0x{cmd:02x}")
+                continue
+
+            if cmd in CONFIG_COMMANDS:
+                self.configured_cmds.add((port, cmd))
+            forward += frame
+
+        return bytes(forward)
+
+    def send_proxy_ack(self, endpoint: Endpoint, port: int, cmd: int) -> None:
+        # Mirrors the firmware's send_ack: payload is two little-endian int32s,
+        # the acked command id and the result (1 == success).
+        payload = struct.pack("<ii", cmd, 1)
+        ack = bytes([RP_CMD_START, RP_CMD_ID_ACK, len(payload), port]) + payload
+        self.queue_write(endpoint, ack)
 
     def pty_has_priority(self) -> bool:
         if self.pty_priority_seconds <= 0:
@@ -387,7 +475,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-lock-ms", type=int, default=20)
     parser.add_argument("--pty-priority-ms", type=int, default=200)
     parser.add_argument("--pty-mode", type=lambda value: int(value, 8), default=0o666)
-    parser.add_argument("--spike-handshake", action="store_true")
+    parser.add_argument("--no-spike-handshake", action="store_true",
+                        help="skip the one-time handshake with the real SPIKE (normally required)")
     parser.add_argument("--handshake-timeout-sec", type=float, default=2.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -408,7 +497,7 @@ def main() -> int:
         write_lock_ms=args.write_lock_ms,
         pty_priority_ms=args.pty_priority_ms,
         pty_mode=args.pty_mode,
-        spike_handshake=args.spike_handshake,
+        spike_handshake=not args.no_spike_handshake,
         verbose=args.verbose,
         handshake_timeout_sec=args.handshake_timeout_sec,
     )
