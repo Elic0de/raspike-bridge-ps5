@@ -3,6 +3,8 @@ from __future__ import annotations
 import socket
 import struct
 
+RP_CMD_INIT = 0xAE
+RP_CMD_INIT_MAGIC = 0xCE
 RP_CMD_START = 0xEA
 RP_PORT_NONE = 255
 
