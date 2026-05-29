@@ -141,7 +141,12 @@ def main() -> int:
     if keyboard_enabled:
         print("keyboard input enabled: gamepad and keyboard can be used together")
 
-    gamepad = GamepadProvider(args.event_device, cfg)
+    try:
+        gamepad = GamepadProvider(args.event_device, cfg)
+    except Exception as exc:
+        gamepad = None
+        if args.verbose:
+            print(f"gamepad unavailable: {exc}", file=sys.stderr)
     with KeyboardProvider(enabled=keyboard_enabled, cfg=cfg) as keyboard:
         last_tick_at = time.monotonic()
         next_controller_probe_at = 0.0
@@ -149,13 +154,14 @@ def main() -> int:
             while True:
                 now = time.monotonic()
 
-                if now >= next_controller_probe_at and not gamepad.ensure_connected():
+                if gamepad is not None and now >= next_controller_probe_at and not gamepad.ensure_connected():
                     if args.verbose:
                         print("waiting for controller...", file=sys.stderr)
                     next_controller_probe_at = now + args.wait_controller_sec
                 actions = set()
                 actions |= keyboard.poll_actions(now)
-                actions |= gamepad.poll_actions(now)
+                if gamepad is not None:
+                    actions |= gamepad.poll_actions(now)
 
                 for action in actions:
                     if action == "emergency_stop":
@@ -183,9 +189,10 @@ def main() -> int:
                     continue
 
                 kb = keyboard.state(now)
-                gp = gamepad.state()
-                throttle = gp.throttle if abs(gp.throttle) > 0.01 else kb.throttle
-                steering = gp.steering if abs(gp.steering) > 0.01 else kb.steering
+                gp = gamepad.state() if gamepad is not None else None
+
+                throttle = gp.throttle if gp is not None and abs(gp.throttle) > 0.01 else kb.throttle
+                steering = gp.steering if gp is not None and abs(gp.steering) > 0.01 else kb.steering
 
                 dt = max(0.0, now - last_tick_at)
                 last_tick_at = now
@@ -202,7 +209,7 @@ def main() -> int:
                 send_stop(publisher.sock, args.left_port, args.right_port)
             except Exception:
                 pass
-            if gamepad.controller is not None:
+            if gamepad is not None and gamepad.controller is not None:
                 gamepad.controller.close()
             publisher.close()
 
