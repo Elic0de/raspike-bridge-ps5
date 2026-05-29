@@ -95,10 +95,21 @@ def find_controller(path: str | None) -> InputDevice | None:
     if InputDevice is None or list_devices is None:
         return None
     if path:
-        return InputDevice(path)
+        try:
+            return InputDevice(path)
+        except OSError:
+            return None
 
-    for dev_path in list_devices():
-        dev = InputDevice(dev_path)
+    try:
+        dev_paths = list_devices()
+    except OSError:
+        return None
+
+    for dev_path in dev_paths:
+        try:
+            dev = InputDevice(dev_path)
+        except OSError:
+            continue
         name = dev.name.lower()
         if (
             any(token in name for token in ("dualsense", "wireless controller", "playstation", "ps5"))
