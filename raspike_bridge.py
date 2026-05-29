@@ -40,7 +40,9 @@ SUPPORTED_BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400)
 RP_CMD_INIT = 0xAE
 RP_CMD_INIT_MAGIC = 0xCE
 RP_CMD_START = 0xEA
+RP_CMD_ID_ALL_STATUS = 0x01
 RP_CMD_ID_ACK = 0x02
+RP_PORT_NONE = 0xFF
 SPIKE_VERSION = bytes([0, 0, 6])
 
 # *_CFG commands (RP_CMD_TYPE_*<<5 | 0). The SPIKE firmware grabs the port
@@ -59,6 +61,12 @@ CONFIG_COMMANDS = frozenset(
 # port to be configured first: COLOR(1), FORCE(2), MOTOR(3), ULTRASONIC(4).
 # Their *_CFG command is (type << 5), i.e. the entries in CONFIG_COMMANDS.
 PORT_DEVICE_TYPES = frozenset({1, 2, 3, 4})
+
+SPIKE_STATUS_PORTS_OFFSET = 40
+SPIKE_STATUS_PORT_COUNT = 6
+SPIKE_STATUS_PORT_SIZE = 16
+SPIKE_STATUS_PORT_INDEX = 0
+SPIKE_STATUS_PORT_CMD_INDEX = 1
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -136,6 +144,7 @@ class Bridge:
         self.selector.register(self.serial.fd, selectors.EVENT_READ, self.serial)
         self.selector.register(self.ptym.fd, selectors.EVENT_READ, self.ptym)
         self.selector.register(self.server, selectors.EVENT_READ, "server")
+        self.flush_serial_parse_buf()
 
     def handshake_spike(self) -> None:
         assert self.serial is not None
@@ -320,6 +329,7 @@ class Bridge:
             frames = self.extract_frames(endpoint.parse_buf)
             if not frames:
                 return
+            self.learn_configured_cmds_from_status(frames)
             self.queue_write(self.ptym, frames)
             for client in list(self.clients.values()):
                 self.queue_write(client, frames)
@@ -370,6 +380,65 @@ class Bridge:
             out += buf[:total]
             del buf[:total]
         return bytes(out)
+
+    def iter_frames(self, frames: bytes):
+        offset = 0
+        while offset + 4 <= len(frames):
+            if frames[offset] != RP_CMD_START:
+                offset += 1
+                continue
+            total = 4 + frames[offset + 2]
+            if offset + total > len(frames):
+                break
+            yield frames[offset:offset + total]
+            offset += total
+
+    def flush_serial_parse_buf(self) -> None:
+        assert self.serial is not None
+        assert self.ptym is not None
+        frames = self.extract_frames(self.serial.parse_buf)
+        if not frames:
+            return
+        self.learn_configured_cmds_from_status(frames)
+        self.queue_write(self.ptym, frames)
+
+    def learn_configured_cmds_from_status(self, frames: bytes) -> None:
+        """Infer already-configured devices from SPIKE status frames.
+
+        If the bridge attaches to an already-running SPIKE program, its local
+        configured_cmds cache starts empty even though the firmware may already
+        own motor/sensor devices. Status frames include each port's active
+        command, so use that to avoid forwarding duplicate *_CFG commands that
+        would trip the firmware's "device must be unconfigured" assert.
+        """
+        min_status_size = (
+            SPIKE_STATUS_PORTS_OFFSET
+            + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE
+        )
+        for frame in self.iter_frames(frames):
+            cmd = frame[1]
+            size = frame[2]
+            port = frame[3]
+            if cmd != RP_CMD_ID_ALL_STATUS or port != RP_PORT_NONE or size < min_status_size:
+                continue
+
+            payload = frame[4:]
+            for i in range(SPIKE_STATUS_PORT_COUNT):
+                offset = SPIKE_STATUS_PORTS_OFFSET + i * SPIKE_STATUS_PORT_SIZE
+                status_port = payload[offset + SPIKE_STATUS_PORT_INDEX]
+                status_cmd = payload[offset + SPIKE_STATUS_PORT_CMD_INDEX]
+                cmd_type = status_cmd >> 5
+                if status_port >= SPIKE_STATUS_PORT_COUNT or cmd_type not in PORT_DEVICE_TYPES:
+                    continue
+
+                config_cmd = cmd_type << 5
+                key = (status_port, config_cmd)
+                if key not in self.configured_cmds:
+                    self.configured_cmds.add(key)
+                    self.log(
+                        "learned configured port from status: "
+                        f"port={status_port} cmd=0x{config_cmd:02x}"
+                    )
 
     def filter_config_frames(self, endpoint: Endpoint, data: bytes) -> bytes:
         """Forward client frames to the serial, proxying duplicate *_CFG ACKs.
