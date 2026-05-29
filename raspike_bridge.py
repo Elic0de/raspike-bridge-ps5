@@ -134,29 +134,68 @@ class Bridge:
 
     def handshake_spike(self) -> None:
         assert self.serial is not None
+        fd = self.serial.fd
+        init = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC])
 
-        os.write(self.serial.fd, bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]))
-
+        # The hub waits ~1s after the port opens (and may reset on open) before
+        # it starts reading, so a single send is easily missed. Re-send the
+        # INIT marker periodically and scan the reply, skipping any boot noise
+        # (e.g. leading zero bytes), exactly like libraspike-art's read loop.
         deadline = time.monotonic() + self.handshake_timeout_sec
-        buf = bytearray()
+        next_send = 0.0
+        saw_init = False
+        collecting = False
+        version = bytearray()
 
-        while time.monotonic() < deadline and len(buf) < 5:
+        while time.monotonic() < deadline:
+            now = time.monotonic()
+            if now >= next_send:
+                try:
+                    os.write(fd, init)
+                except (BlockingIOError, InterruptedError):
+                    pass
+                except OSError as exc:
+                    if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                        raise
+                next_send = now + 0.25
+
             try:
-                chunk = os.read(self.serial.fd, 5 - len(buf))
-                if chunk:
-                    buf.extend(chunk)
-                    continue
+                chunk = os.read(fd, 64)
             except BlockingIOError:
-                pass
+                chunk = b""
             except OSError as exc:
-                if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    chunk = b""
+                else:
                     raise
-            time.sleep(0.01)
 
-        if len(buf) != 5 or buf[0] != RP_CMD_INIT or buf[1] != RP_CMD_INIT_MAGIC:
-            raise RuntimeError(f"SPIKE handshake failed: {buf.hex()}")
+            if not chunk:
+                time.sleep(0.01)
+                continue
 
-        self.log(f"SPIKE handshake ok: {buf.hex()}")
+            for i, b in enumerate(chunk):
+                if collecting:
+                    version.append(b)
+                    if len(version) == 3:
+                        # Keep anything that trailed the reply for the main loop.
+                        self.serial.parse_buf.extend(chunk[i + 1:])
+                        self.log(f"SPIKE handshake ok: version={tuple(version)}")
+                        return
+                elif b == RP_CMD_START:
+                    # Hub is already past its boot handshake and streaming
+                    # status frames. Treat it as alive and resume from here.
+                    self.serial.parse_buf.extend(chunk[i:])
+                    self.log("SPIKE already running (status frame seen); handshake skipped")
+                    return
+                elif saw_init and b == RP_CMD_INIT_MAGIC:
+                    collecting = True
+                else:
+                    saw_init = b == RP_CMD_INIT
+
+        raise RuntimeError(
+            "SPIKE handshake timed out: no reply from the hub on "
+            f"{self.serial_path}. Reboot/restart the SPIKE program and retry."
+        )
 
     def open_serial(self) -> int:
         fd = os.open(self.serial_path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
@@ -477,7 +516,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pty-mode", type=lambda value: int(value, 8), default=0o666)
     parser.add_argument("--no-spike-handshake", action="store_true",
                         help="skip the one-time handshake with the real SPIKE (normally required)")
-    parser.add_argument("--handshake-timeout-sec", type=float, default=2.0)
+    parser.add_argument("--handshake-timeout-sec", type=float, default=10.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
 

@@ -9,17 +9,32 @@ from .protocol import RP_CMD_INIT, RP_CMD_INIT_MAGIC, motor_power_packet
 
 _HANDSHAKE_TIMEOUT = 3.0
 _VERSION_LEN = 3
+_CONNECT_TIMEOUT = 15.0
 
 
 class StatePublisher:
     def __init__(self, socket_path: str, left_port: int, right_port: int, log_file: str):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect(socket_path)
+        self.sock = self._connect(socket_path)
         self._handshake()
         self.sock.setblocking(False)
         self.left_port = left_port
         self.right_port = right_port
         self.log_path = Path(log_file)
+
+    def _connect(self, socket_path: str) -> socket.socket:
+        # The bridge only creates the socket after its (possibly several second)
+        # handshake with the real SPIKE, so retry until it appears.
+        deadline = time.monotonic() + _CONNECT_TIMEOUT
+        while True:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(socket_path)
+                return sock
+            except (FileNotFoundError, ConnectionRefusedError):
+                sock.close()
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
 
     def _handshake(self) -> None:
         # The bridge multiplexes status frames onto this stream, so the
