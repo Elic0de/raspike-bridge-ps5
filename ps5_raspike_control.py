@@ -101,7 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rate-hz", type=float, default=30.0)
     parser.add_argument("--log-file", default="/tmp/raspike-ps5-events.jsonl")
     parser.add_argument("--config", default="ps5_controller.yaml")
-    parser.add_argument("--configure", action="store_true")
+    parser.add_argument("--no-configure", action="store_true",
+                        help="skip motor MOT_CFG/MOT_STU at startup (motors must already be configured, "
+                             "otherwise the SPIKE crashes on the first motor command)")
     parser.add_argument("--keyboard", action="store_true", help="force keyboard input even when stdin is not auto-detected")
     parser.add_argument("--no-keyboard-fallback", action="store_true", help="disable automatic keyboard input")
     parser.add_argument("--wait-controller-sec", type=float, default=1.0)
@@ -117,7 +119,7 @@ def main() -> int:
 
     cfg = load_config(args.config)
     publisher = StatePublisher(args.socket, args.left_port, args.right_port, args.log_file)
-    if args.configure:
+    if not args.no_configure:
         configure_motors(publisher.sock, args.left_port, args.right_port)
 
     power_limit = clamp(args.max_power, args.min_power, 100)

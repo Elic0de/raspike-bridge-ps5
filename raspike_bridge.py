@@ -55,6 +55,11 @@ CONFIG_COMMANDS = frozenset(
     {RP_CMD_ID_COL_CFG, RP_CMD_ID_FRC_CFG, RP_CMD_ID_MOT_CFG, RP_CMD_ID_US_CFG}
 )
 
+# Command types (cmd >> 5) that address a port device and therefore require the
+# port to be configured first: COLOR(1), FORCE(2), MOTOR(3), ULTRASONIC(4).
+# Their *_CFG command is (type << 5), i.e. the entries in CONFIG_COMMANDS.
+PORT_DEVICE_TYPES = frozenset({1, 2, 3, 4})
+
 
 def termios_baud_rates() -> dict[int, int]:
     assert termios is not None
@@ -391,13 +396,25 @@ class Bridge:
 
             cmd = frame[1]
             port = frame[3]
-            if cmd in CONFIG_COMMANDS and (port, cmd) in self.configured_cmds:
-                self.send_proxy_ack(endpoint, port, cmd)
-                self.log(f"proxy config ack for {endpoint.name}: port={port} cmd=0x{cmd:02x}")
-                continue
+            cmd_type = cmd >> 5
 
             if cmd in CONFIG_COMMANDS:
+                # *_CFG: forward the first one (and remember it), proxy the rest.
+                if (port, cmd) in self.configured_cmds:
+                    self.send_proxy_ack(endpoint, port, cmd)
+                    self.log(f"proxy config ack for {endpoint.name}: port={port} cmd=0x{cmd:02x}")
+                    continue
                 self.configured_cmds.add((port, cmd))
+                forward += frame
+                continue
+
+            # Any other per-port device command (color/force/motor/ultrasonic)
+            # makes the firmware dereference a NULL device and crash if the port
+            # was never configured for that type. Drop it as a safety net.
+            if cmd_type in PORT_DEVICE_TYPES and (port, cmd_type << 5) not in self.configured_cmds:
+                self.log(f"dropped cmd 0x{cmd:02x} from {endpoint.name}: port {port} not configured")
+                continue
+
             forward += frame
 
         return bytes(forward)
