@@ -123,9 +123,15 @@ class GamepadProvider:
     def ensure_connected(self) -> bool:
         if self.controller is not None:
             return True
-        self.controller = find_controller(self.event_device)
+
+        try:
+            self.controller = find_controller(self.event_device)
+        except FileNotFoundError:
+            return False
+
         if self.controller is None:
             return False
+
         self.axes = axis_ranges(self.controller)
         return True
 
