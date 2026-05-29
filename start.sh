@@ -27,8 +27,8 @@ python3 raspike_bridge.py \
     -v &
 BRIDGE_PID=$!
 
-echo "Bridge started (PID $BRIDGE_PID), waiting for socket..."
-sleep 1
+echo "Bridge started (PID $BRIDGE_PID), waiting for socket/status..."
+sleep 3
 
 python3 ps5_raspike_control.py \
     --event-device /dev/input/event4 \
