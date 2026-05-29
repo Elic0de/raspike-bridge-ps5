@@ -21,10 +21,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 python3 raspike_bridge.py \
-    --serial /dev/USB_SPIKE \
-    --pty-link "$HOME/raspike-tty" \
-    --unix-socket /tmp/raspike.sock \
-    --pty-priority-ms 200 \
+    --serial /dev/ttyACM0 \
+    --pty-link /home/sangi/raspike-tty \
+    --pty-priority-ms 0 \
     -v &
 BRIDGE_PID=$!
 
@@ -32,9 +31,5 @@ echo "Bridge started (PID $BRIDGE_PID), waiting for socket..."
 sleep 1
 
 python3 ps5_raspike_control.py \
-    --socket /tmp/raspike.sock \
-    --left-port B \
-    --right-port A \
-    --max-power 60 \
-    --config ./ps5_controller.yaml \
+    --event-device /dev/input/event4 \
     -v
