@@ -22,6 +22,7 @@ ARM_PORT="${RASPIKE_ARM_PORT:-C}"
 FORCE_PORT="${RASPIKE_FORCE_PORT:-D}"
 INIT_DELAY_SEC="${RASPIKE_INIT_DELAY_SEC:-0.2}"
 INIT_RETRIES="${RASPIKE_INIT_RETRIES:-2}"
+INIT_ORDER="${RASPIKE_INIT_ORDER:-arm-first}"
 
 PS5_ARGS=(
     --event-device /dev/input/event4
@@ -30,6 +31,7 @@ PS5_ARGS=(
     --force-port "$FORCE_PORT"
     --init-delay-sec "$INIT_DELAY_SEC"
     --init-retries "$INIT_RETRIES"
+    --init-order "$INIT_ORDER"
     --telemetry-host "$TELEMETRY_HOST"
     --telemetry-port "$TELEMETRY_PORT"
     --web-control-host "$WEB_CONTROL_HOST"

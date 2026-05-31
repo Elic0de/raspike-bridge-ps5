@@ -161,6 +161,8 @@ def parse_args() -> argparse.Namespace:
                         help="delay between startup MOT_CFG/MOT_STU/FRC_CFG commands")
     parser.add_argument("--init-retries", type=int, default=2,
                         help="retry count for startup device configuration commands")
+    parser.add_argument("--init-order", choices=("arm-first", "drive-first"), default="drive-first",
+                        help="startup motor configuration order")
     parser.add_argument("--log-file", default="/tmp/raspike-ps5-events.jsonl")
     parser.add_argument("--config", default="ps5_controller.yaml")
     parser.add_argument("--no-configure", action="store_true",
@@ -206,8 +208,14 @@ def main() -> int:
     if not args.no_configure:
         init_delay_sec = max(0.0, args.init_delay_sec)
         init_retries = max(0, args.init_retries)
+        if arm_enabled and args.init_order == "arm-first":
+            try:
+                configure_motor(publisher.sock, args.arm_port, init_delay_sec, init_retries, direction=0)
+            except Exception as exc:
+                arm_enabled = False
+                print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
         configure_motors(publisher.sock, args.left_port, args.right_port, init_delay_sec, init_retries)
-        if arm_enabled:
+        if arm_enabled and args.init_order == "drive-first":
             try:
                 configure_motor(publisher.sock, args.arm_port, init_delay_sec, init_retries, direction=0)
             except Exception as exc:
