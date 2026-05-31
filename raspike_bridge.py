@@ -133,6 +133,7 @@ class Bridge:
         # (port, cmd) pairs whose config has already been forwarded to the real
         # SPIKE. Subsequent configs for the same pair are answered locally.
         self.configured_cmds: set[tuple[int, int]] = set()
+        self.status_configured_cmds: set[tuple[int, int]] | None = None
 
     def log(self, message: str) -> None:
         if self.verbose:
@@ -368,6 +369,8 @@ class Bridge:
             return data
 
         response = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]) + SPIKE_VERSION
+        if endpoint is self.ptym:
+            self.refresh_config_cache_for_pty_session()
         self.queue_write(endpoint, response)
         self.log(f"proxy handshake for {endpoint.name}: req={data[:2].hex()} resp={response.hex()}")
         return data[2:]
@@ -459,6 +462,7 @@ class Bridge:
                 continue
 
             payload = frame[4:]
+            status_configured_cmds: set[tuple[int, int]] = set()
             for i in range(SPIKE_STATUS_PORT_COUNT):
                 offset = SPIKE_STATUS_PORTS_OFFSET + i * SPIKE_STATUS_PORT_SIZE
                 status_port = payload[offset + SPIKE_STATUS_PORT_INDEX]
@@ -469,12 +473,31 @@ class Bridge:
 
                 config_cmd = cmd_type << 5
                 key = (status_port, config_cmd)
+                status_configured_cmds.add(key)
                 if key not in self.configured_cmds:
                     self.configured_cmds.add(key)
                     self.log(
                         "learned configured port from status: "
                         f"port={status_port} cmd=0x{config_cmd:02x}"
                     )
+            self.status_configured_cmds = status_configured_cmds
+
+    def refresh_config_cache_for_pty_session(self) -> None:
+        """Reset stale per-run config cache when libraspike reconnects.
+
+        The SPIKE-side RasPike firmware can be restarted independently from this
+        bridge, while the bridge process keeps running. When a new libraspike
+        process connects through the PTY, prefer the latest observed status over
+        the bridge's old forwarded-config cache so duplicate config protection
+        still works without hiding configs that the restarted firmware needs.
+        """
+        before = set(self.configured_cmds)
+        self.configured_cmds = set(self.status_configured_cmds or ())
+        if self.configured_cmds != before:
+            self.log(
+                "refreshed config cache for pty session: "
+                f"before={sorted(before)} after={sorted(self.configured_cmds)}"
+            )
 
     def filter_config_frames(self, endpoint: Endpoint, data: bytes) -> bytes:
         """
