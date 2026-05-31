@@ -89,8 +89,8 @@ Web control input is TCP JSON lines so browser keyboard commands do not share
 the best-effort telemetry path. Use `--no-telemetry` or `--no-web-control` to
 disable either side.
 
-When running the WebUI on a separate PC, keep Web control on RasPi localhost
-and send telemetry to the PC:
+When running the WebUI on a separate PC over a trusted LAN, send telemetry to
+the PC and expose Web control on the RasPi LAN interface:
 
 ```bash
 python3 ps5_raspike_control.py \
@@ -102,22 +102,21 @@ python3 ps5_raspike_control.py \
   --config ./ps5_controller.yaml \
   --telemetry-host <PC_IP_ADDRESS> \
   --telemetry-port 8765 \
-  --web-control-host 127.0.0.1 \
+  --web-control-host 0.0.0.0 \
   --web-control-port 8766
 ```
 
-Forward Web control from the PC:
-
-```bash
-ssh -N -L 8766:127.0.0.1:8766 pi@<RASPI_HOST>
-```
-
 If you use `start.sh` on the RasPi, pass the PC address through an environment
-variable:
+variable and allow LAN control:
 
 ```bash
-RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
+RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> \
+RASPIKE_WEB_CONTROL_HOST=0.0.0.0 \
+./start.sh
 ```
+
+On shared networks, keep `RASPIKE_WEB_CONTROL_HOST=127.0.0.1` and use SSH port
+forwarding instead.
 
 If auto-detection fails:
 
