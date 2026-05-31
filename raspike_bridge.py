@@ -71,10 +71,14 @@ SPIKE_STATUS_PORT_COUNT = 6
 SPIKE_STATUS_PORT_SIZE = 16
 SPIKE_STATUS_PORT_INDEX = 0
 SPIKE_STATUS_PORT_CMD_INDEX = 1
+SPIKE_STATUS_PORT_DATA_OFFSET = 4
+SPIKE_STATUS_FORCE_VALUE_INDEX = 0
+SPIKE_STATUS_FORCE_TOUCHED_INDEX = 8
 SPIKE_STATUS_BUTTON_OFFSET = 28
 SPIKE_STATUS_BUTTON_OFFSET_LEGACY = 36
 RP_CMD_ID_BRIDGE_VBUTTON = 0xF0
 RP_CMD_ID_BRIDGE_VFORCE = 0xF1
+VIRTUAL_FORCE_NEWTONS = 10.0
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -447,8 +451,14 @@ class Bridge:
                     base = 4 + ports_offset + i * SPIKE_STATUS_PORT_SIZE
                     status_port = mutable[base + SPIKE_STATUS_PORT_INDEX]
                     if status_port in virtual_force_ports:
-                        force_idx = base + 4 + 8
-                        mutable[force_idx] = 1
+                        data_idx = base + SPIKE_STATUS_PORT_DATA_OFFSET
+                        struct.pack_into(
+                            "<f",
+                            mutable,
+                            data_idx + SPIKE_STATUS_FORCE_VALUE_INDEX,
+                            VIRTUAL_FORCE_NEWTONS,
+                        )
+                        mutable[data_idx + SPIKE_STATUS_FORCE_TOUCHED_INDEX] = 1
             out += mutable
         return bytes(out)
 
