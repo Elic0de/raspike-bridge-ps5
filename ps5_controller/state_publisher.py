@@ -20,11 +20,28 @@ _STATUS_BUTTON_OFFSET_LEGACY = 36
 _STATUS_ACCELERATION_OFFSET = 4
 _STATUS_ANGULAR_VELOCITY_OFFSET = 16
 _PORT_DATA_OFFSET = 4
+_CMD_TYPE_COLOR = 0x1
+_CMD_TYPE_FORCE = 0x2
+_CMD_TYPE_MOTOR = 0x3
+_CMD_TYPE_ULTRASONIC = 0x4
+_CMD_COL_RGB = 0x21
+_CMD_COL_COLOR = 0x22
+_CMD_COL_COLOR_SURFACE_OFF = 0x23
+_CMD_COL_HSV = 0x24
+_CMD_COL_HSV_SURFACE_OFF = 0x25
+_CMD_COL_REFLECTION = 0x26
+_CMD_COL_AMBIENT = 0x27
+_COLOR_RGB_INDEX = 0
+_COLOR_HSV_INDEX = 0
+_COLOR_REFLECTION_INDEX = 0
+_COLOR_AMBIENT_INDEX = 0
 _FORCE_TOUCHED_INDEX = 8
 _MOTOR_COUNT_INDEX = 0
 _MOTOR_SPEED_INDEX = 4
 _MOTOR_POWER_INDEX = 8
 _MOTOR_STALLED_INDEX = 10
+_ULTRASONIC_DISTANCE_INDEX = 0
+_ULTRASONIC_PRESENCE_INDEX = 4
 
 
 class StatePublisher:
@@ -168,6 +185,8 @@ class StatePublisher:
         self._button_bits = struct.unpack_from("<I", payload, button_offset)[0]
         motors: dict[str, object] = {}
         force: dict[str, object] = {}
+        color: dict[str, object] = {}
+        ultrasonic: dict[str, object] = {}
         for i in range(_STATUS_PORT_COUNT):
             off = ports_offset + i * _STATUS_PORT_SIZE
             port = payload[off]
@@ -175,7 +194,23 @@ class StatePublisher:
             if port >= _STATUS_PORT_COUNT:
                 continue
             data_offset = off + _PORT_DATA_OFFSET
-            if cmd >> 5 == 0x3:
+            cmd_type = cmd >> 5
+            if cmd_type == _CMD_TYPE_COLOR:
+                color_status: dict[str, object] = {"port": port, "cmd": cmd}
+                if cmd == _CMD_COL_RGB:
+                    r, g, b = struct.unpack_from("<HHH", payload, data_offset + _COLOR_RGB_INDEX)
+                    color_status["rgb"] = {"r": r, "g": g, "b": b}
+                elif cmd in (_CMD_COL_COLOR, _CMD_COL_COLOR_SURFACE_OFF, _CMD_COL_HSV, _CMD_COL_HSV_SURFACE_OFF):
+                    h, s, v = struct.unpack_from("<HBB", payload, data_offset + _COLOR_HSV_INDEX)
+                    color_status["hsv"] = {"h": h, "s": s, "v": v}
+                    color_status["surface"] = cmd in (_CMD_COL_COLOR, _CMD_COL_HSV)
+                    color_status["mode"] = "color" if cmd in (_CMD_COL_COLOR, _CMD_COL_COLOR_SURFACE_OFF) else "hsv"
+                elif cmd == _CMD_COL_REFLECTION:
+                    color_status["reflection"] = struct.unpack_from("<i", payload, data_offset + _COLOR_REFLECTION_INDEX)[0]
+                elif cmd == _CMD_COL_AMBIENT:
+                    color_status["ambient"] = struct.unpack_from("<i", payload, data_offset + _COLOR_AMBIENT_INDEX)[0]
+                color[str(port)] = color_status
+            if cmd_type == _CMD_TYPE_MOTOR:
                 motors[str(port)] = {
                     "port": port,
                     "cmd": cmd,
@@ -186,8 +221,15 @@ class StatePublisher:
                 }
             touched = payload[off + _PORT_DATA_OFFSET + _FORCE_TOUCHED_INDEX] != 0
             self._force_touched[port] = touched
-            if cmd >> 5 == 0x2:
+            if cmd_type == _CMD_TYPE_FORCE:
                 force[str(port)] = {"port": port, "cmd": cmd, "touched": touched}
+            if cmd_type == _CMD_TYPE_ULTRASONIC:
+                ultrasonic[str(port)] = {
+                    "port": port,
+                    "cmd": cmd,
+                    "distance_mm": struct.unpack_from("<i", payload, data_offset + _ULTRASONIC_DISTANCE_INDEX)[0],
+                    "presence": payload[data_offset + _ULTRASONIC_PRESENCE_INDEX] != 0,
+                }
         self._latest_status = {
             "battery": {
                 "voltage_mv": struct.unpack_from("<H", payload, 0)[0],
@@ -200,6 +242,8 @@ class StatePublisher:
             "buttons": self._button_bits,
             "motors": motors,
             "force_sensors": force,
+            "color_sensors": color,
+            "ultrasonic_sensors": ultrasonic,
         }
 
     def log(self, kind: str, **fields: object) -> None:
