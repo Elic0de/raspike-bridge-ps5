@@ -12,11 +12,16 @@ from ps5_controller.drive_mixer import DriveMixer
 from ps5_controller.input_provider import GamepadProvider, KeyboardProvider
 from ps5_controller.protocol import (
     RP_CMD_ID_ACK,
+    RP_CMD_ID_COL_CFG,
+    RP_CMD_ID_COL_REF,
     RP_CMD_ID_FRC_CFG,
     RP_CMD_ID_MOT_CFG,
     RP_CMD_ID_MOT_STU,
+    RP_CMD_ID_US_CFG,
     bridge_virtual_button_packet,
     bridge_virtual_force_packet,
+    color_sensor_config_packet,
+    color_sensor_mode_packet,
     force_sensor_config_packet,
     gyro_reset_packet,
     motor_config_packet,
@@ -24,6 +29,8 @@ from ps5_controller.protocol import (
     motor_setup_packet,
     send_brake,
     send_stop,
+    ultrasonic_sensor_config_packet,
+    ultrasonic_sensor_mode_packet,
 )
 from ps5_controller.remote_control import RemoteControlServer
 from ps5_controller.state_publisher import StatePublisher
@@ -143,6 +150,20 @@ def configure_force_sensor(sock: socket.socket, port: int, init_delay_sec: float
     time.sleep(init_delay_sec)
 
 
+def configure_color_sensor(sock: socket.socket, port: int, init_delay_sec: float, retries: int) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_COL_CFG, color_sensor_config_packet(port), "COL_CFG", retries=retries)
+    time.sleep(init_delay_sec)
+    sock.sendall(color_sensor_mode_packet(port, RP_CMD_ID_COL_REF))
+    time.sleep(init_delay_sec)
+
+
+def configure_ultrasonic_sensor(sock: socket.socket, port: int, init_delay_sec: float, retries: int) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_US_CFG, ultrasonic_sensor_config_packet(port), "US_CFG", retries=retries)
+    time.sleep(init_delay_sec)
+    sock.sendall(ultrasonic_sensor_mode_packet(port))
+    time.sleep(init_delay_sec)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", default="/tmp/raspike.sock")
@@ -152,6 +173,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--arm-port", type=port_id, default=port_id("C"))
     parser.add_argument("--no-arm", action="store_true", help="disable optional arm motor init and control")
     parser.add_argument("--force-port", type=port_id, default=port_id("D"))
+    parser.add_argument("--color-port", type=port_id, default=port_id("E"))
+    parser.add_argument("--ultrasonic-port", type=port_id, default=port_id("F"))
+    parser.add_argument("--no-color-sensor", action="store_true")
+    parser.add_argument("--no-ultrasonic-sensor", action="store_true")
     parser.add_argument("--max-power", type=int, default=60)
     parser.add_argument("--arm-power", type=int, default=35)
     parser.add_argument("--min-power", type=int, default=10)
@@ -223,16 +248,31 @@ def main() -> int:
                 print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
     force_enabled = True
     if not args.no_configure:
+        init_delay_sec = max(0.0, args.init_delay_sec)
+        init_retries = max(0, args.init_retries)
         try:
             configure_force_sensor(
                 publisher.sock,
                 args.force_port,
-                max(0.0, args.init_delay_sec),
-                max(0, args.init_retries),
+                init_delay_sec,
+                init_retries,
             )
         except Exception as exc:
             force_enabled = False
             print(f"warning: force sensor init skipped on port {args.force_port} ({exc})", file=sys.stderr)
+        if not args.no_color_sensor:
+            try:
+                configure_color_sensor(publisher.sock, args.color_port, init_delay_sec, init_retries)
+            except Exception as exc:
+                print(f"warning: color sensor init skipped on port {args.color_port} ({exc})", file=sys.stderr)
+        if not args.no_ultrasonic_sensor:
+            try:
+                configure_ultrasonic_sensor(publisher.sock, args.ultrasonic_port, init_delay_sec, init_retries)
+            except Exception as exc:
+                print(
+                    f"warning: ultrasonic sensor init skipped on port {args.ultrasonic_port} ({exc})",
+                    file=sys.stderr,
+                )
 
     power_limit = clamp(args.max_power, args.min_power, 100)
     safe_mode = False

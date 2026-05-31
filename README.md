@@ -107,6 +107,8 @@ python3 ps5_raspike_control.py \
   --right-port A \
   --arm-port C \
   --force-port D \
+  --color-port E \
+  --ultrasonic-port F \
   --config ./ps5_controller.yaml \
   --telemetry-host <PC_IP_ADDRESS> \
   --telemetry-port 8765 \
@@ -122,8 +124,11 @@ RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
 ```
 
 `start.sh` also accepts `RASPIKE_LEFT_PORT`, `RASPIKE_RIGHT_PORT`,
-`RASPIKE_ARM_PORT`, and `RASPIKE_FORCE_PORT`. Set `RASPIKE_ARM_PORT=none` to
-run without the optional arm motor. Use `RASPIKE_INIT_DELAY_SEC` and
+`RASPIKE_ARM_PORT`, `RASPIKE_FORCE_PORT`, `RASPIKE_COLOR_PORT`, and
+`RASPIKE_ULTRASONIC_PORT`. Set `RASPIKE_ARM_PORT=none` to run without the
+optional arm motor. Set `RASPIKE_COLOR_PORT=none` or
+`RASPIKE_ULTRASONIC_PORT=none` to skip those sensors. Use
+`RASPIKE_INIT_DELAY_SEC` and
 `RASPIKE_INIT_RETRIES` to tune startup device setup pacing. `start.sh` defaults
 to `RASPIKE_INIT_ORDER=arm-first`; set `RASPIKE_INIT_ORDER=drive-first` to use
 the original order.

@@ -20,6 +20,8 @@ LEFT_PORT="${RASPIKE_LEFT_PORT:-B}"
 RIGHT_PORT="${RASPIKE_RIGHT_PORT:-A}"
 ARM_PORT="${RASPIKE_ARM_PORT:-C}"
 FORCE_PORT="${RASPIKE_FORCE_PORT:-D}"
+COLOR_PORT="${RASPIKE_COLOR_PORT:-E}"
+ULTRASONIC_PORT="${RASPIKE_ULTRASONIC_PORT:-F}"
 INIT_DELAY_SEC="${RASPIKE_INIT_DELAY_SEC:-0.2}"
 INIT_RETRIES="${RASPIKE_INIT_RETRIES:-2}"
 INIT_ORDER="${RASPIKE_INIT_ORDER:-arm-first}"
@@ -45,6 +47,24 @@ case "${ARM_PORT,,}" in
         ;;
     *)
         PS5_ARGS+=(--arm-port "$ARM_PORT")
+        ;;
+esac
+
+case "${COLOR_PORT,,}" in
+    ""|"none"|"off"|"disable"|"disabled")
+        PS5_ARGS+=(--no-color-sensor)
+        ;;
+    *)
+        PS5_ARGS+=(--color-port "$COLOR_PORT")
+        ;;
+esac
+
+case "${ULTRASONIC_PORT,,}" in
+    ""|"none"|"off"|"disable"|"disabled")
+        PS5_ARGS+=(--no-ultrasonic-sensor)
+        ;;
+    *)
+        PS5_ARGS+=(--ultrasonic-port "$ULTRASONIC_PORT")
         ;;
 esac
 
