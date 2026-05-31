@@ -16,14 +16,16 @@ class _Client:
 
 
 class RemoteControlServer:
-    def __init__(self, host: str, port: int, timeout_sec: float):
+    def __init__(self, host: str, port: int, timeout_sec: float, verbose: bool = False):
         self.timeout_sec = timeout_sec
+        self.verbose = verbose
         self._selector = selectors.DefaultSelector()
         self._clients: dict[int, _Client] = {}
         self._actions: set[str] = set()
         self._state = ProviderState()
         self._enabled = False
         self._last_drive_at = 0.0
+        self._last_log = ""
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._server.bind((host, port))
@@ -99,16 +101,22 @@ class RemoteControlServer:
         elif msg_type == "drive":
             if not self._enabled:
                 return
-            self._state = ProviderState(
+            state = ProviderState(
                 throttle=self._axis(msg.get("throttle")),
                 steering=self._axis(msg.get("steering")),
                 arm=self._axis(msg.get("arm")),
             )
+            self._state = state
             self._last_drive_at = time.monotonic()
+            self._log(
+                f"web control received: drive throttle={state.throttle:g} "
+                f"steering={state.steering:g} arm={state.arm:g}"
+            )
         elif msg_type == "action":
             action = msg.get("action")
             if isinstance(action, str):
                 self._actions.add(action)
+                self._log(f"web control received: action={action}")
 
     @staticmethod
     def _axis(value: object) -> float:
@@ -124,3 +132,8 @@ class RemoteControlServer:
             pass
         self._clients.pop(fileno, None)
         sock.close()
+
+    def _log(self, message: str) -> None:
+        if self.verbose and message != self._last_log:
+            print(message)
+            self._last_log = message

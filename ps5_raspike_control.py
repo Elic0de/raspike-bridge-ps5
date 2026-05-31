@@ -148,7 +148,12 @@ def main() -> int:
     telemetry = UdpTelemetryPublisher(args.telemetry_host, args.telemetry_port, enabled=not args.no_telemetry)
     remote = None
     if not args.no_web_control:
-        remote = RemoteControlServer(args.web_control_host, args.web_control_port, args.web_control_timeout_sec)
+        remote = RemoteControlServer(
+            args.web_control_host,
+            args.web_control_port,
+            args.web_control_timeout_sec,
+            verbose=args.verbose,
+        )
     if args.verbose:
         telemetry_label = "disabled" if args.no_telemetry else f"{args.telemetry_host}:{args.telemetry_port}"
         control_label = "disabled" if args.no_web_control else f"{args.web_control_host}:{args.web_control_port}"
