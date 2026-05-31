@@ -25,7 +25,9 @@ from ps5_controller.protocol import (
     send_brake,
     send_stop,
 )
+from ps5_controller.remote_control import RemoteControlServer
 from ps5_controller.state_publisher import StatePublisher
+from ps5_controller.telemetry import UdpTelemetryPublisher
 
 
 def clamp(value: int, low: int, high: int) -> int:
@@ -124,6 +126,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keyboard", action="store_true", help="force keyboard input even when stdin is not auto-detected")
     parser.add_argument("--no-keyboard-fallback", action="store_true", help="disable automatic keyboard input")
     parser.add_argument("--wait-controller-sec", type=float, default=1.0)
+    parser.add_argument("--telemetry-host", default="127.0.0.1")
+    parser.add_argument("--telemetry-port", type=int, default=8765)
+    parser.add_argument("--no-telemetry", action="store_true")
+    parser.add_argument("--web-control-host", default="127.0.0.1")
+    parser.add_argument("--web-control-port", type=int, default=8766)
+    parser.add_argument("--no-web-control", action="store_true")
+    parser.add_argument("--web-control-timeout-sec", type=float, default=0.35)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
 
@@ -136,6 +145,10 @@ def main() -> int:
 
     cfg = load_config(args.config)
     publisher = StatePublisher(args.socket, args.left_port, args.right_port, args.log_file)
+    telemetry = UdpTelemetryPublisher(args.telemetry_host, args.telemetry_port, enabled=not args.no_telemetry)
+    remote = None
+    if not args.no_web_control:
+        remote = RemoteControlServer(args.web_control_host, args.web_control_port, args.web_control_timeout_sec)
     arm_enabled = True
     if not args.no_configure:
         configure_motors(publisher.sock, args.left_port, args.right_port)
@@ -195,6 +208,8 @@ def main() -> int:
                 actions |= keyboard.poll_actions(now)
                 if gamepad is not None:
                     actions |= gamepad.poll_actions(now)
+                if remote is not None:
+                    actions |= remote.poll_actions(now)
                 if force_enabled:
                     touched = publisher.force_touched(args.force_port)
                     if touched and not last_force_touched:
@@ -239,15 +254,41 @@ def main() -> int:
                         return 0
 
                 if emergency:
+                    telemetry.publish(
+                        {
+                            **publisher.telemetry_snapshot(),
+                            "control": {
+                                "safe_mode": safe_mode,
+                                "emergency": emergency,
+                                "power_limit": 0,
+                                "throttle": 0.0,
+                                "steering": 0.0,
+                                "arm": 0.0,
+                            },
+                        }
+                    )
                     time.sleep(interval)
                     continue
 
                 kb = keyboard.state(now)
                 gp = gamepad.state() if gamepad is not None else None
+                rm = remote.state(now) if remote is not None else None
 
-                throttle = gp.throttle if gp is not None and abs(gp.throttle) > 0.01 else kb.throttle
-                steering = gp.steering if gp is not None and abs(gp.steering) > 0.01 else kb.steering
-                arm = gp.arm if gp is not None and abs(gp.arm) > 0.01 else kb.arm
+                throttle = kb.throttle
+                steering = kb.steering
+                arm = kb.arm
+                if rm is not None and (
+                    abs(rm.throttle) > 0.01 or abs(rm.steering) > 0.01 or abs(rm.arm) > 0.01
+                ):
+                    throttle = rm.throttle
+                    steering = rm.steering
+                    arm = rm.arm
+                if gp is not None and (
+                    abs(gp.throttle) > 0.01 or abs(gp.steering) > 0.01 or abs(gp.arm) > 0.01
+                ):
+                    throttle = gp.throttle
+                    steering = gp.steering
+                    arm = gp.arm
 
                 dt = max(0.0, now - last_tick_at)
                 last_tick_at = now
@@ -262,6 +303,19 @@ def main() -> int:
                     if arm_pwm != last_arm_power:
                         publisher.sock.sendall(motor_power_packet(args.arm_port, arm_pwm))
                         last_arm_power = arm_pwm
+                telemetry.publish(
+                    {
+                        **publisher.telemetry_snapshot(),
+                        "control": {
+                            "safe_mode": safe_mode,
+                            "emergency": emergency,
+                            "power_limit": cap,
+                            "throttle": round(throttle_c, 3),
+                            "steering": round(steering_c, 3),
+                            "arm": round(arm, 3),
+                        },
+                    }
+                )
 
                 time.sleep(interval)
         finally:
@@ -273,6 +327,9 @@ def main() -> int:
                 pass
             if gamepad is not None and gamepad.controller is not None:
                 gamepad.controller.close()
+            if remote is not None:
+                remote.close()
+            telemetry.close()
             publisher.close()
 
 

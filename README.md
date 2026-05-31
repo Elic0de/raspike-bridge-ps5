@@ -77,6 +77,48 @@ python3 ps5_raspike_control.py \
   -v
 ```
 
+By default, the PS5 control process also exposes:
+
+```text
+UDP telemetry: 127.0.0.1:8765
+TCP Web control input: 127.0.0.1:8766
+```
+
+Telemetry is one-way UDP JSON for motor, IMU, battery, and control state.
+Web control input is TCP JSON lines so browser keyboard commands do not share
+the best-effort telemetry path. Use `--no-telemetry` or `--no-web-control` to
+disable either side.
+
+When running the WebUI on a separate PC, keep Web control on RasPi localhost
+and send telemetry to the PC:
+
+```bash
+python3 ps5_raspike_control.py \
+  --socket /tmp/raspike.sock \
+  --left-port B \
+  --right-port A \
+  --arm-port C \
+  --force-port D \
+  --config ./ps5_controller.yaml \
+  --telemetry-host <PC_IP_ADDRESS> \
+  --telemetry-port 8765 \
+  --web-control-host 127.0.0.1 \
+  --web-control-port 8766
+```
+
+Forward Web control from the PC:
+
+```bash
+ssh -N -L 8766:127.0.0.1:8766 pi@<RASPI_HOST>
+```
+
+If you use `start.sh` on the RasPi, pass the PC address through an environment
+variable:
+
+```bash
+RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
+```
+
 If auto-detection fails:
 
 ```bash

@@ -12,6 +12,11 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 source "$VENV_DIR/bin/activate"
 
+TELEMETRY_HOST="${RASPIKE_TELEMETRY_HOST:-127.0.0.1}"
+TELEMETRY_PORT="${RASPIKE_TELEMETRY_PORT:-8765}"
+WEB_CONTROL_HOST="${RASPIKE_WEB_CONTROL_HOST:-127.0.0.1}"
+WEB_CONTROL_PORT="${RASPIKE_WEB_CONTROL_PORT:-8766}"
+
 cleanup() {
     echo ""
     echo "Stopping..."
@@ -32,4 +37,8 @@ sleep 3
 
 python3 ps5_raspike_control.py \
     --event-device /dev/input/event4 \
+    --telemetry-host "$TELEMETRY_HOST" \
+    --telemetry-port "$TELEMETRY_PORT" \
+    --web-control-host "$WEB_CONTROL_HOST" \
+    --web-control-port "$WEB_CONTROL_PORT" \
     -v
