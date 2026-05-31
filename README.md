@@ -107,12 +107,10 @@ python3 ps5_raspike_control.py \
 ```
 
 If you use `start.sh` on the RasPi, pass the PC address through an environment
-variable and allow LAN control:
+variable. `start.sh` exposes Web control on the RasPi LAN interface by default:
 
 ```bash
-RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> \
-RASPIKE_WEB_CONTROL_HOST=0.0.0.0 \
-./start.sh
+RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
 ```
 
 On shared networks, keep `RASPIKE_WEB_CONTROL_HOST=127.0.0.1` and use SSH port
