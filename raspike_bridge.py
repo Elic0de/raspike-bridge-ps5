@@ -142,6 +142,7 @@ class Bridge:
         # (port, cmd) pairs whose config has already been forwarded to the real
         # SPIKE. Subsequent configs for the same pair are answered locally.
         self.configured_cmds: set[tuple[int, int]] = set()
+        self.pending_config_cmds: set[tuple[int, int]] = set()
         self.status_configured_cmds: set[tuple[int, int]] | None = None
         self.status_setup_motor_ports: set[int] = set()
 
@@ -346,6 +347,7 @@ class Bridge:
             frames = self.extract_frames(endpoint.parse_buf)
             if not frames:
                 return
+            self.learn_configured_cmds_from_acks(frames)
             self.learn_configured_cmds_from_status(frames)
             frames = self.apply_virtual_inputs(frames)
             self.queue_write(self.ptym, frames)
@@ -419,6 +421,7 @@ class Bridge:
         frames = self.extract_frames(self.serial.parse_buf)
         if not frames:
             return
+        self.learn_configured_cmds_from_acks(frames)
         self.learn_configured_cmds_from_status(frames)
         frames = self.apply_virtual_inputs(frames)
         self.queue_write(self.ptym, frames)
@@ -507,12 +510,37 @@ class Bridge:
                     status_setup_motor_ports.add(status_port)
                 if key not in self.configured_cmds:
                     self.configured_cmds.add(key)
+                    self.pending_config_cmds.discard(key)
                     self.log(
                         "learned configured port from status: "
                         f"port={status_port} cmd=0x{config_cmd:02x}"
                     )
             self.status_configured_cmds = status_configured_cmds
             self.status_setup_motor_ports = status_setup_motor_ports
+
+    def learn_configured_cmds_from_acks(self, frames: bytes) -> None:
+        """Update config cache from real firmware ACKs.
+
+        Keep *_CFG commands pending until the SPIKE reports success. This lets
+        startup clients retry a transient failure instead of being handed a
+        proxied success for a config the firmware rejected.
+        """
+        for frame in self.iter_frames(frames):
+            if frame[1] != RP_CMD_ID_ACK or frame[2] < 8:
+                continue
+            ack_port = frame[3]
+            ack_cmd, ack_data = struct.unpack("<ii", frame[4:12])
+            if ack_cmd not in CONFIG_COMMANDS:
+                continue
+            key = (ack_port, ack_cmd)
+            self.pending_config_cmds.discard(key)
+            if ack_data == 1:
+                if key not in self.configured_cmds:
+                    self.log(f"learned configured port from ack: port={ack_port} cmd=0x{ack_cmd:02x}")
+                self.configured_cmds.add(key)
+            elif key in self.configured_cmds:
+                self.configured_cmds.discard(key)
+                self.log(f"removed failed config from cache: port={ack_port} cmd=0x{ack_cmd:02x}")
 
     def refresh_config_cache_for_pty_session(self) -> None:
         """Reset stale per-run config cache when libraspike reconnects.
@@ -537,6 +565,7 @@ class Bridge:
                 "refreshed config cache for pty session: "
                 f"before={sorted(before)} after={sorted(self.configured_cmds)}"
             )
+        self.pending_config_cmds.clear()
 
     def filter_config_frames(self, endpoint: Endpoint, data: bytes) -> bytes:
         """
@@ -602,7 +631,10 @@ class Bridge:
                     self.send_proxy_ack(endpoint, port, cmd)
                     self.log(f"proxy config ack for {endpoint.name}: port={port} cmd=0x{cmd:02x}")
                     continue
-                self.configured_cmds.add((port, cmd))
+                if (port, cmd) in self.pending_config_cmds:
+                    self.log(f"dropped duplicate pending config from {endpoint.name}: port={port} cmd=0x{cmd:02x}")
+                    continue
+                self.pending_config_cmds.add((port, cmd))
                 forward += frame
                 continue
 

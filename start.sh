@@ -16,6 +16,35 @@ TELEMETRY_HOST="${RASPIKE_TELEMETRY_HOST:-127.0.0.1}"
 TELEMETRY_PORT="${RASPIKE_TELEMETRY_PORT:-8765}"
 WEB_CONTROL_HOST="${RASPIKE_WEB_CONTROL_HOST:-0.0.0.0}"
 WEB_CONTROL_PORT="${RASPIKE_WEB_CONTROL_PORT:-8766}"
+LEFT_PORT="${RASPIKE_LEFT_PORT:-B}"
+RIGHT_PORT="${RASPIKE_RIGHT_PORT:-A}"
+ARM_PORT="${RASPIKE_ARM_PORT:-C}"
+FORCE_PORT="${RASPIKE_FORCE_PORT:-D}"
+INIT_DELAY_SEC="${RASPIKE_INIT_DELAY_SEC:-0.2}"
+INIT_RETRIES="${RASPIKE_INIT_RETRIES:-2}"
+
+PS5_ARGS=(
+    --event-device /dev/input/event4
+    --left-port "$LEFT_PORT"
+    --right-port "$RIGHT_PORT"
+    --force-port "$FORCE_PORT"
+    --init-delay-sec "$INIT_DELAY_SEC"
+    --init-retries "$INIT_RETRIES"
+    --telemetry-host "$TELEMETRY_HOST"
+    --telemetry-port "$TELEMETRY_PORT"
+    --web-control-host "$WEB_CONTROL_HOST"
+    --web-control-port "$WEB_CONTROL_PORT"
+    -v
+)
+
+case "${ARM_PORT,,}" in
+    ""|"none"|"off"|"disable"|"disabled")
+        PS5_ARGS+=(--no-arm)
+        ;;
+    *)
+        PS5_ARGS+=(--arm-port "$ARM_PORT")
+        ;;
+esac
 
 cleanup() {
     echo ""
@@ -35,10 +64,4 @@ BRIDGE_PID=$!
 echo "Bridge started (PID $BRIDGE_PID), waiting for socket/status..."
 sleep 3
 
-python3 ps5_raspike_control.py \
-    --event-device /dev/input/event4 \
-    --telemetry-host "$TELEMETRY_HOST" \
-    --telemetry-port "$TELEMETRY_PORT" \
-    --web-control-host "$WEB_CONTROL_HOST" \
-    --web-control-port "$WEB_CONTROL_PORT" \
-    -v
+python3 ps5_raspike_control.py "${PS5_ARGS[@]}"

@@ -82,27 +82,65 @@ def wait_ack(sock: socket.socket, port: int, expected_cmd: int, timeout_sec: flo
     raise TimeoutError(f"ACK timeout: port={port} cmd=0x{expected_cmd:02x}")
 
 
-def send_and_wait_ack(sock: socket.socket, port: int, cmd: int, packet: bytes, label: str) -> None:
-    sock.sendall(packet)
-    ack = wait_ack(sock, port, cmd, timeout_sec=1.5)
-    if ack != 1:
-        raise RuntimeError(f"{label} failed: port={port} ack={ack}")
+def send_and_wait_ack(
+    sock: socket.socket,
+    port: int,
+    cmd: int,
+    packet: bytes,
+    label: str,
+    *,
+    retries: int = 0,
+    retry_delay_sec: float = 0.2,
+) -> None:
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        if attempt:
+            time.sleep(retry_delay_sec)
+        sock.sendall(packet)
+        try:
+            ack = wait_ack(sock, port, cmd, timeout_sec=1.5)
+        except Exception as exc:
+            last_error = exc
+            continue
+        if ack == 1:
+            return
+        last_error = RuntimeError(f"{label} failed: port={port} ack={ack}")
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"{label} failed: port={port}")
 
 
-def configure_motors(sock: socket.socket, left_port: int, right_port: int) -> None:
-    send_and_wait_ack(sock, left_port, RP_CMD_ID_MOT_CFG, motor_config_packet(left_port), "MOT_CFG left")
-    send_and_wait_ack(sock, right_port, RP_CMD_ID_MOT_CFG, motor_config_packet(right_port), "MOT_CFG right")
-    send_and_wait_ack(sock, left_port, RP_CMD_ID_MOT_STU, motor_setup_packet(left_port, direction=1), "MOT_STU left")
-    send_and_wait_ack(sock, right_port, RP_CMD_ID_MOT_STU, motor_setup_packet(right_port, direction=0), "MOT_STU right")
+def configure_motors(sock: socket.socket, left_port: int, right_port: int, init_delay_sec: float, retries: int) -> None:
+    send_and_wait_ack(
+        sock, left_port, RP_CMD_ID_MOT_CFG, motor_config_packet(left_port), "MOT_CFG left", retries=retries
+    )
+    time.sleep(init_delay_sec)
+    send_and_wait_ack(
+        sock, right_port, RP_CMD_ID_MOT_CFG, motor_config_packet(right_port), "MOT_CFG right", retries=retries
+    )
+    time.sleep(init_delay_sec)
+    send_and_wait_ack(
+        sock, left_port, RP_CMD_ID_MOT_STU, motor_setup_packet(left_port, direction=1), "MOT_STU left", retries=retries
+    )
+    time.sleep(init_delay_sec)
+    send_and_wait_ack(
+        sock, right_port, RP_CMD_ID_MOT_STU, motor_setup_packet(right_port, direction=0), "MOT_STU right", retries=retries
+    )
+    time.sleep(init_delay_sec)
 
 
-def configure_motor(sock: socket.socket, port: int, direction: int = 0) -> None:
-    send_and_wait_ack(sock, port, RP_CMD_ID_MOT_CFG, motor_config_packet(port), "MOT_CFG aux")
-    send_and_wait_ack(sock, port, RP_CMD_ID_MOT_STU, motor_setup_packet(port, direction=direction), "MOT_STU aux")
+def configure_motor(sock: socket.socket, port: int, init_delay_sec: float, retries: int, direction: int = 0) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_MOT_CFG, motor_config_packet(port), "MOT_CFG aux", retries=retries)
+    time.sleep(init_delay_sec)
+    send_and_wait_ack(
+        sock, port, RP_CMD_ID_MOT_STU, motor_setup_packet(port, direction=direction), "MOT_STU aux", retries=retries
+    )
+    time.sleep(init_delay_sec)
 
 
-def configure_force_sensor(sock: socket.socket, port: int) -> None:
-    send_and_wait_ack(sock, port, RP_CMD_ID_FRC_CFG, force_sensor_config_packet(port), "FRC_CFG")
+def configure_force_sensor(sock: socket.socket, port: int, init_delay_sec: float, retries: int) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_FRC_CFG, force_sensor_config_packet(port), "FRC_CFG", retries=retries)
+    time.sleep(init_delay_sec)
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,12 +150,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--left-port", type=port_id, default=port_id("B"))
     parser.add_argument("--right-port", type=port_id, default=port_id("A"))
     parser.add_argument("--arm-port", type=port_id, default=port_id("C"))
+    parser.add_argument("--no-arm", action="store_true", help="disable optional arm motor init and control")
     parser.add_argument("--force-port", type=port_id, default=port_id("D"))
     parser.add_argument("--max-power", type=int, default=60)
     parser.add_argument("--arm-power", type=int, default=35)
     parser.add_argument("--min-power", type=int, default=10)
     parser.add_argument("--power-step", type=int, default=5)
     parser.add_argument("--rate-hz", type=float, default=30.0)
+    parser.add_argument("--init-delay-sec", type=float, default=0.2,
+                        help="delay between startup MOT_CFG/MOT_STU/FRC_CFG commands")
+    parser.add_argument("--init-retries", type=int, default=2,
+                        help="retry count for startup device configuration commands")
     parser.add_argument("--log-file", default="/tmp/raspike-ps5-events.jsonl")
     parser.add_argument("--config", default="ps5_controller.yaml")
     parser.add_argument("--no-configure", action="store_true",
@@ -159,18 +202,26 @@ def main() -> int:
         control_label = "disabled" if args.no_web_control else f"{args.web_control_host}:{args.web_control_port}"
         print(f"telemetry udp -> {telemetry_label}")
         print(f"web control tcp <- {control_label}")
-    arm_enabled = True
+    arm_enabled = not args.no_arm
     if not args.no_configure:
-        configure_motors(publisher.sock, args.left_port, args.right_port)
-        try:
-            configure_motor(publisher.sock, args.arm_port, direction=0)
-        except Exception as exc:
-            arm_enabled = False
-            print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
+        init_delay_sec = max(0.0, args.init_delay_sec)
+        init_retries = max(0, args.init_retries)
+        configure_motors(publisher.sock, args.left_port, args.right_port, init_delay_sec, init_retries)
+        if arm_enabled:
+            try:
+                configure_motor(publisher.sock, args.arm_port, init_delay_sec, init_retries, direction=0)
+            except Exception as exc:
+                arm_enabled = False
+                print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
     force_enabled = True
     if not args.no_configure:
         try:
-            configure_force_sensor(publisher.sock, args.force_port)
+            configure_force_sensor(
+                publisher.sock,
+                args.force_port,
+                max(0.0, args.init_delay_sec),
+                max(0, args.init_retries),
+            )
         except Exception as exc:
             force_enabled = False
             print(f"warning: force sensor init skipped on port {args.force_port} ({exc})", file=sys.stderr)

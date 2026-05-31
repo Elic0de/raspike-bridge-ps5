@@ -77,6 +77,13 @@ python3 ps5_raspike_control.py \
   -v
 ```
 
+If no arm motor is connected, add `--no-arm`. This skips the optional C-port
+motor setup and disables arm controls.
+
+Startup device setup is intentionally paced to avoid overrunning the SPIKE port
+device initialization. Tune it with `--init-delay-sec` and `--init-retries` if
+the third or later device reports a transient `ack=0`.
+
 By default, the PS5 control process also exposes:
 
 ```text
@@ -112,6 +119,11 @@ variable. `start.sh` exposes Web control on the RasPi LAN interface by default:
 ```bash
 RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
 ```
+
+`start.sh` also accepts `RASPIKE_LEFT_PORT`, `RASPIKE_RIGHT_PORT`,
+`RASPIKE_ARM_PORT`, and `RASPIKE_FORCE_PORT`. Set `RASPIKE_ARM_PORT=none` to
+run without the optional arm motor. Use `RASPIKE_INIT_DELAY_SEC` and
+`RASPIKE_INIT_RETRIES` to tune startup device setup pacing.
 
 On shared networks, keep `RASPIKE_WEB_CONTROL_HOST=127.0.0.1` and use SSH port
 forwarding instead.
