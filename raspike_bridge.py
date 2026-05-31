@@ -62,12 +62,14 @@ CONFIG_COMMANDS = frozenset(
 # Their *_CFG command is (type << 5), i.e. the entries in CONFIG_COMMANDS.
 PORT_DEVICE_TYPES = frozenset({1, 2, 3, 4})
 
-SPIKE_STATUS_PORTS_OFFSET = 40
+SPIKE_STATUS_PORTS_OFFSET = 32
+SPIKE_STATUS_PORTS_OFFSET_LEGACY = 40
 SPIKE_STATUS_PORT_COUNT = 6
 SPIKE_STATUS_PORT_SIZE = 16
 SPIKE_STATUS_PORT_INDEX = 0
 SPIKE_STATUS_PORT_CMD_INDEX = 1
-SPIKE_STATUS_BUTTON_OFFSET = 36
+SPIKE_STATUS_BUTTON_OFFSET = 28
+SPIKE_STATUS_BUTTON_OFFSET_LEGACY = 36
 RP_CMD_ID_BRIDGE_VBUTTON = 0xF0
 RP_CMD_ID_BRIDGE_VFORCE = 0xF1
 
@@ -426,20 +428,32 @@ class Bridge:
             if frame[1] != RP_CMD_ID_ALL_STATUS or frame[3] != RP_PORT_NONE:
                 out += frame
                 continue
+            layout = self.status_layout(frame[2])
+            if layout is None:
+                out += frame
+                continue
+            ports_offset, button_offset = layout
             mutable = bytearray(frame)
-            if frame[2] >= (SPIKE_STATUS_BUTTON_OFFSET + 4) and self.virtual_button_bits:
-                bits_offset = 4 + SPIKE_STATUS_BUTTON_OFFSET
+            if frame[2] >= (button_offset + 4) and self.virtual_button_bits:
+                bits_offset = 4 + button_offset
                 current = struct.unpack_from("<I", mutable, bits_offset)[0]
                 struct.pack_into("<I", mutable, bits_offset, current | self.virtual_button_bits)
-            if frame[2] >= (SPIKE_STATUS_PORTS_OFFSET + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE) and virtual_force_ports:
+            if frame[2] >= (ports_offset + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE) and virtual_force_ports:
                 for i in range(SPIKE_STATUS_PORT_COUNT):
-                    base = 4 + SPIKE_STATUS_PORTS_OFFSET + i * SPIKE_STATUS_PORT_SIZE
+                    base = 4 + ports_offset + i * SPIKE_STATUS_PORT_SIZE
                     status_port = mutable[base + SPIKE_STATUS_PORT_INDEX]
                     if status_port in virtual_force_ports:
                         force_idx = base + 4 + 8
                         mutable[force_idx] = 1
             out += mutable
         return bytes(out)
+
+    def status_layout(self, payload_size: int) -> tuple[int, int] | None:
+        if payload_size >= SPIKE_STATUS_PORTS_OFFSET + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE:
+            return SPIKE_STATUS_PORTS_OFFSET, SPIKE_STATUS_BUTTON_OFFSET
+        if payload_size >= SPIKE_STATUS_PORTS_OFFSET_LEGACY + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE:
+            return SPIKE_STATUS_PORTS_OFFSET_LEGACY, SPIKE_STATUS_BUTTON_OFFSET_LEGACY
+        return None
 
     def learn_configured_cmds_from_status(self, frames: bytes) -> None:
         """Infer already-configured devices from SPIKE status frames.
@@ -450,21 +464,21 @@ class Bridge:
         command, so use that to avoid forwarding duplicate *_CFG commands that
         would trip the firmware's "device must be unconfigured" assert.
         """
-        min_status_size = (
-            SPIKE_STATUS_PORTS_OFFSET
-            + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE
-        )
         for frame in self.iter_frames(frames):
             cmd = frame[1]
             size = frame[2]
             port = frame[3]
-            if cmd != RP_CMD_ID_ALL_STATUS or port != RP_PORT_NONE or size < min_status_size:
+            if cmd != RP_CMD_ID_ALL_STATUS or port != RP_PORT_NONE:
                 continue
+            layout = self.status_layout(size)
+            if layout is None:
+                continue
+            ports_offset, _button_offset = layout
 
             payload = frame[4:]
             status_configured_cmds: set[tuple[int, int]] = set()
             for i in range(SPIKE_STATUS_PORT_COUNT):
-                offset = SPIKE_STATUS_PORTS_OFFSET + i * SPIKE_STATUS_PORT_SIZE
+                offset = ports_offset + i * SPIKE_STATUS_PORT_SIZE
                 status_port = payload[offset + SPIKE_STATUS_PORT_INDEX]
                 status_cmd = payload[offset + SPIKE_STATUS_PORT_CMD_INDEX]
                 cmd_type = status_cmd >> 5
