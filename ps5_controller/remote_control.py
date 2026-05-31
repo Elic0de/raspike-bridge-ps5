@@ -91,7 +91,9 @@ class RemoteControlServer:
         msg_type = msg.get("type")
         if msg_type == "enable":
             self._enabled = bool(msg.get("enabled"))
-            if not self._enabled:
+            if self._enabled:
+                self._last_drive_at = time.monotonic()
+            else:
                 self._state = ProviderState()
                 self._actions.add("coast_stop")
         elif msg_type == "drive":
