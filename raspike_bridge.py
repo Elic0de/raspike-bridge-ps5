@@ -514,7 +514,14 @@ class Bridge:
         still works without hiding configs that the restarted firmware needs.
         """
         before = set(self.configured_cmds)
-        self.configured_cmds = set(self.status_configured_cmds or ())
+        # Motor setup is visible in status frames, so it can be refreshed from
+        # the observed SPIKE state. Sensor *_CFG state is not reflected in the
+        # status command byte until a later sensor mode command, so keep the
+        # bridge-owned record for those to avoid duplicate CFG asserts.
+        preserved_sensor_cmds = {
+            key for key in self.configured_cmds if key[1] != RP_CMD_ID_MOT_CFG
+        }
+        self.configured_cmds = set(self.status_configured_cmds or ()) | preserved_sensor_cmds
         if self.configured_cmds != before:
             self.log(
                 "refreshed config cache for pty session: "
