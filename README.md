@@ -116,7 +116,7 @@ Triangle: gyro heading reset
 Options : manual start
 L1+R1   : toggle safe mode
 D-pad Up/Down: arm motor C up/down
-D-pad Left/Right: hub left/right button
+D-pad Left/Right: hub left/right button (`dpad_left` / `dpad_right` in yaml)
 Circle  : force sensor trigger
 Hub left button: left-button action
 Hub center button: center-button action

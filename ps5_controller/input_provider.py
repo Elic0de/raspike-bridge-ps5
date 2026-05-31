@@ -147,6 +147,12 @@ class GamepadProvider:
         self._pressed_at: dict[int, float] = {}
         self._hold_fired: set[tuple[int, str]] = set()
 
+    def _binding_press_action(self, key_name: str) -> str | None:
+        binding = self.cfg.bindings.buttons.get(key_name)
+        if binding is None:
+            return None
+        return binding.press
+
     def ensure_connected(self) -> bool:
         if self.controller is not None:
             return True
@@ -177,9 +183,13 @@ class GamepadProvider:
                     if event.code == ecodes.ABS_HAT0X:
                         if event.value != prev_hat_x:
                             if event.value == -1:
-                                actions.add("button_left")
+                                action = self._binding_press_action("dpad_left")
+                                if action:
+                                    actions.add(action)
                             elif event.value == 1:
-                                actions.add("button_left")
+                                action = self._binding_press_action("dpad_right")
+                                if action:
+                                    actions.add(action)
                         prev_hat_x = event.value
                 elif event.type == ecodes.EV_KEY:
                     if event.value == 1:

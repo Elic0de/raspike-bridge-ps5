@@ -21,6 +21,12 @@ bindings:
   BTN_EAST:
     press:
       action: virtual_force_touch
+  dpad_left:
+    press:
+      action: button_left
+  dpad_right:
+    press:
+      action: button_right
 
   space:
     press:
