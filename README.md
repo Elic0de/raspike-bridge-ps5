@@ -95,6 +95,8 @@ automatic keyboard input.
 ```text
 W/A/S/D : throttle/steer
 Arrow Up/Down: arm motor C up/down
+Arrow Left/Right: hub left/right button
+x       : hub center button
 space   : emergency stop / brake
 r       : gyro reset
 Enter   : start
@@ -114,7 +116,7 @@ Triangle: gyro heading reset
 Options : manual start
 L1+R1   : toggle safe mode
 D-pad Up/Down: arm motor C up/down
-D-pad Left/Right: left button press
+D-pad Left/Right: hub left/right button
 Circle  : force sensor trigger
 Hub left button: left-button action
 Hub center button: center-button action

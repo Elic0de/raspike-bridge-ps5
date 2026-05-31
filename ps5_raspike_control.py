@@ -222,6 +222,8 @@ def main() -> int:
                         print(f"safe_mode={'on' if safe_mode else 'off'}")
                     elif action == "button_left":
                         publisher.sock.sendall(bridge_virtual_button_packet(0x08, duration_ms=120))
+                    elif action == "button_right":
+                        publisher.sock.sendall(bridge_virtual_button_packet(0x04, duration_ms=120))
                     elif action == "virtual_force_touch":
                         publisher.sock.sendall(
                             bridge_virtual_force_packet(args.force_port, touched=True, duration_ms=120)

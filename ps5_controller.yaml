@@ -37,6 +37,15 @@ bindings:
   f:
     press:
       action: virtual_force_touch
+  left:
+    press:
+      action: button_left
+  right:
+    press:
+      action: button_right
+  x:
+    press:
+      action: center_button
 
 input:
   deadzone: 0.06
