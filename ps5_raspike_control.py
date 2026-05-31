@@ -149,6 +149,11 @@ def main() -> int:
     remote = None
     if not args.no_web_control:
         remote = RemoteControlServer(args.web_control_host, args.web_control_port, args.web_control_timeout_sec)
+    if args.verbose:
+        telemetry_label = "disabled" if args.no_telemetry else f"{args.telemetry_host}:{args.telemetry_port}"
+        control_label = "disabled" if args.no_web_control else f"{args.web_control_host}:{args.web_control_port}"
+        print(f"telemetry udp -> {telemetry_label}")
+        print(f"web control tcp <- {control_label}")
     arm_enabled = True
     if not args.no_configure:
         configure_motors(publisher.sock, args.left_port, args.right_port)
