@@ -55,6 +55,7 @@ class StatePublisher:
         self._rx_buf = bytearray()
         self._button_bits = 0
         self._force_touched = [False] * _STATUS_PORT_COUNT
+        self._sensor_types: dict[int, str] = {}
         self._latest_status: dict[str, object] | None = None
         self._last_left_power = 0
         self._last_right_power = 0
@@ -129,6 +130,10 @@ class StatePublisher:
             return self._force_touched[port]
         return False
 
+    def set_sensor_type(self, port: int, sensor_type: str) -> None:
+        if 0 <= port < _STATUS_PORT_COUNT:
+            self._sensor_types[port] = sensor_type
+
     def telemetry_snapshot(self) -> dict[str, object]:
         status = self._latest_status or {}
         motors = status.get("motors", {})
@@ -195,7 +200,8 @@ class StatePublisher:
                 continue
             data_offset = off + _PORT_DATA_OFFSET
             cmd_type = cmd >> 5
-            if cmd_type == _CMD_TYPE_COLOR:
+            sensor_type = self._sensor_types.get(port)
+            if cmd_type == _CMD_TYPE_COLOR or sensor_type == "color":
                 color_status: dict[str, object] = {"port": port, "cmd": cmd}
                 if cmd == _CMD_COL_RGB:
                     r, g, b = struct.unpack_from("<HHH", payload, data_offset + _COLOR_RGB_INDEX)
@@ -221,9 +227,15 @@ class StatePublisher:
                 }
             touched = payload[off + _PORT_DATA_OFFSET + _FORCE_TOUCHED_INDEX] != 0
             self._force_touched[port] = touched
-            if cmd_type == _CMD_TYPE_FORCE:
-                force[str(port)] = {"port": port, "cmd": cmd, "touched": touched}
-            if cmd_type == _CMD_TYPE_ULTRASONIC:
+            if cmd_type == _CMD_TYPE_FORCE or sensor_type == "force":
+                force[str(port)] = {
+                    "port": port,
+                    "cmd": cmd,
+                    "force_n": struct.unpack_from("<f", payload, data_offset)[0],
+                    "distance": struct.unpack_from("<f", payload, data_offset + 4)[0],
+                    "touched": touched,
+                }
+            if cmd_type == _CMD_TYPE_ULTRASONIC or sensor_type == "ultrasonic":
                 ultrasonic[str(port)] = {
                     "port": port,
                     "cmd": cmd,

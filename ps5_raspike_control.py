@@ -30,7 +30,6 @@ from ps5_controller.protocol import (
     send_brake,
     send_stop,
     ultrasonic_sensor_config_packet,
-    ultrasonic_sensor_mode_packet,
 )
 from ps5_controller.remote_control import RemoteControlServer
 from ps5_controller.state_publisher import StatePublisher
@@ -160,8 +159,6 @@ def configure_color_sensor(sock: socket.socket, port: int, init_delay_sec: float
 def configure_ultrasonic_sensor(sock: socket.socket, port: int, init_delay_sec: float, retries: int) -> None:
     send_and_wait_ack(sock, port, RP_CMD_ID_US_CFG, ultrasonic_sensor_config_packet(port), "US_CFG", retries=retries)
     time.sleep(init_delay_sec)
-    sock.sendall(ultrasonic_sensor_mode_packet(port))
-    time.sleep(init_delay_sec)
 
 
 def parse_args() -> argparse.Namespace:
@@ -260,11 +257,15 @@ def main() -> int:
         except Exception as exc:
             force_enabled = False
             print(f"warning: force sensor init skipped on port {args.force_port} ({exc})", file=sys.stderr)
+        else:
+            publisher.set_sensor_type(args.force_port, "force")
         if not args.no_color_sensor:
             try:
                 configure_color_sensor(publisher.sock, args.color_port, init_delay_sec, init_retries)
             except Exception as exc:
                 print(f"warning: color sensor init skipped on port {args.color_port} ({exc})", file=sys.stderr)
+            else:
+                publisher.set_sensor_type(args.color_port, "color")
         if not args.no_ultrasonic_sensor:
             try:
                 configure_ultrasonic_sensor(publisher.sock, args.ultrasonic_port, init_delay_sec, init_retries)
@@ -273,6 +274,8 @@ def main() -> int:
                     f"warning: ultrasonic sensor init skipped on port {args.ultrasonic_port} ({exc})",
                     file=sys.stderr,
                 )
+            else:
+                publisher.set_sensor_type(args.ultrasonic_port, "ultrasonic")
 
     power_limit = clamp(args.max_power, args.min_power, 100)
     safe_mode = False

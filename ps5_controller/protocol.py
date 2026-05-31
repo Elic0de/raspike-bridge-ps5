@@ -24,7 +24,6 @@ RP_CMD_ID_MOT_POW = 0x64
 RP_CMD_ID_MOT_STP = 0x65
 RP_CMD_ID_MOT_STP_BRK = 0x66
 RP_CMD_ID_US_CFG = 0x80
-RP_CMD_ID_US_DST = 0x81
 RP_CMD_ID_HUB_IMU_RST_HDG = 0xB5
 RP_CMD_ID_BRIDGE_VBUTTON = 0xF0
 RP_CMD_ID_BRIDGE_VFORCE = 0xF1
@@ -52,10 +51,6 @@ def force_sensor_config_packet(port: int) -> bytes:
 
 def ultrasonic_sensor_config_packet(port: int) -> bytes:
     return make_packet(port, RP_CMD_ID_US_CFG)
-
-
-def ultrasonic_sensor_mode_packet(port: int) -> bytes:
-    return make_packet(port, RP_CMD_ID_US_DST)
 
 
 def motor_setup_packet(port: int, direction: int = 0, reset_count: bool = True) -> bytes:
