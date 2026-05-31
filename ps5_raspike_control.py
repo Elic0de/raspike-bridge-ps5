@@ -243,7 +243,6 @@ def main() -> int:
             except Exception as exc:
                 arm_enabled = False
                 print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
-    force_enabled = True
     if not args.no_configure:
         init_delay_sec = max(0.0, args.init_delay_sec)
         init_retries = max(0, args.init_retries)
@@ -255,7 +254,6 @@ def main() -> int:
                 init_retries,
             )
         except Exception as exc:
-            force_enabled = False
             print(f"warning: force sensor init skipped on port {args.force_port} ({exc})", file=sys.stderr)
         else:
             publisher.set_sensor_type(args.force_port, "force")
@@ -306,7 +304,6 @@ def main() -> int:
     with KeyboardProvider(enabled=keyboard_enabled, cfg=cfg) as keyboard:
         last_tick_at = time.monotonic()
         next_controller_probe_at = 0.0
-        last_force_touched = False
         try:
             while True:
                 now = time.monotonic()
@@ -322,11 +319,6 @@ def main() -> int:
                     actions |= gamepad.poll_actions(now)
                 if remote is not None:
                     actions |= remote.poll_actions(now)
-                if force_enabled:
-                    touched = publisher.force_touched(args.force_port)
-                    if touched and not last_force_touched:
-                        actions.add("force_sensor_trigger")
-                    last_force_touched = touched
 
                 for action in actions:
                     if action == "emergency_stop":
@@ -355,12 +347,6 @@ def main() -> int:
                         publisher.sock.sendall(
                             bridge_virtual_force_packet(args.force_port, touched=True, duration_ms=120)
                         )
-                    elif action == "force_sensor_trigger":
-                        if arm_enabled:
-                            publisher.sock.sendall(motor_power_packet(args.arm_port, args.arm_power))
-                            time.sleep(0.12)
-                            publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
-                            last_arm_power = 0
                     elif action == "shutdown":
                         print("shutdown requested")
                         return 0
