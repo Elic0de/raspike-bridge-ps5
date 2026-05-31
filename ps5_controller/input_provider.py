@@ -16,6 +16,7 @@ from .input_mapper import AxisState, axis_ranges, ecodes, find_controller
 class ProviderState:
     throttle: float = 0.0
     steering: float = 0.0
+    arm: float = 0.0
 
 
 class KeyboardProvider:
@@ -29,6 +30,7 @@ class KeyboardProvider:
         self._active_prev: set[str] = set()
         self._last_state_at: float | None = None
         self._steering = 0.0
+        self._escape_buf = bytearray()
         self.cfg = cfg
 
     @staticmethod
@@ -56,8 +58,30 @@ class KeyboardProvider:
         readable, _, _ = select.select([self.fd], [], [], 0.0)
         if self.fd in readable:
             chars = os.read(self.fd, 32)
-            for b in chars:
-                ch = self._decode_key(b)
+            self._escape_buf.extend(chars)
+            while self._escape_buf:
+                ch = None
+                b = self._escape_buf[0]
+                if b == 27:
+                    if len(self._escape_buf) < 3:
+                        break
+                    seq = bytes(self._escape_buf[:3])
+                    del self._escape_buf[:3]
+                    if seq == b"\x1b[A":
+                        ch = "up"
+                    elif seq == b"\x1b[B":
+                        ch = "down"
+                    elif seq == b"\x1b[C":
+                        ch = "right"
+                    elif seq == b"\x1b[D":
+                        ch = "left"
+                    else:
+                        continue
+                else:
+                    del self._escape_buf[0]
+                    ch = self._decode_key(b)
+                if ch is None:
+                    continue
                 self._until[ch] = now + 0.2
                 if ch not in self._pressed_at:
                     self._pressed_at[ch] = now
@@ -92,6 +116,8 @@ class KeyboardProvider:
         down = self._until.get("s", 0.0) > now
         left = self._until.get("a", 0.0) > now
         right = self._until.get("d", 0.0) > now
+        arm_up = self._until.get("up", 0.0) > now
+        arm_down = self._until.get("down", 0.0) > now
         steering_target = (1.0 if right else 0.0) - (1.0 if left else 0.0)
         dt = 0.0 if self._last_state_at is None else max(0.0, now - self._last_state_at)
         self._last_state_at = now
@@ -108,6 +134,7 @@ class KeyboardProvider:
         return ProviderState(
             throttle=(1.0 if up else 0.0) - (1.0 if down else 0.0),
             steering=self._steering,
+            arm=(1.0 if arm_up else 0.0) - (1.0 if arm_down else 0.0),
         )
 
 
@@ -140,12 +167,20 @@ class GamepadProvider:
         if self.controller is None:
             return actions
         try:
+            prev_hat_x = self.axes.get(ecodes.ABS_HAT0X, AxisState()).value
             readable, _, _ = select.select([self.controller.fd], [], [], 0.0)
             if self.controller.fd not in readable:
                 return actions
             for event in self.controller.read():
                 if event.type == ecodes.EV_ABS and event.code in self.axes:
                     self.axes[event.code].value = event.value
+                    if event.code == ecodes.ABS_HAT0X:
+                        if event.value != prev_hat_x:
+                            if event.value == -1:
+                                actions.add("button_left")
+                            elif event.value == 1:
+                                actions.add("button_left")
+                        prev_hat_x = event.value
                 elif event.type == ecodes.EV_KEY:
                     if event.value == 1:
                         self._pressed_at[event.code] = now
@@ -190,4 +225,10 @@ class GamepadProvider:
         steering = axis_x.normalized_around(127, self.cfg.input.deadzone)
         accelerator = self.axes.get(ecodes.ABS_RZ, AxisState(minimum=0, maximum=255)).trigger()
         brake = self.axes.get(ecodes.ABS_Z, AxisState(minimum=0, maximum=255)).trigger()
-        return ProviderState(throttle=accelerator - brake, steering=steering)
+        hat_y = self.axes.get(ecodes.ABS_HAT0Y, AxisState(minimum=-1, maximum=1)).value
+        arm = 0.0
+        if hat_y == -1:
+            arm = 1.0
+        elif hat_y == 1:
+            arm = -1.0
+        return ProviderState(throttle=accelerator - brake, steering=steering, arm=arm)

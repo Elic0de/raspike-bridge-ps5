@@ -5,10 +5,10 @@ bindings:
 
   BTN_SOUTH:
     press:
-      action: emergency_stop
+      action: center_button
     hold:
       duration_ms: 1500
-      action: shutdown
+      action: emergency_stop
 
   BTN_NORTH:
     press:
@@ -20,7 +20,7 @@ bindings:
 
   BTN_EAST:
     press:
-      action: coast_stop
+      action: force_sensor_trigger
 
   space:
     press:

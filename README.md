@@ -92,6 +92,7 @@ automatic keyboard input.
 
 ```text
 W/A/S/D : throttle/steer
+Arrow Up/Down: arm motor C up/down
 space   : emergency stop / brake
 r       : gyro reset
 Enter   : start
@@ -104,11 +105,14 @@ c       : motor stop / coast
 L stick : steering
 R2      : accelerator
 L2      : brake / reverse
-X       : emergency stop / brake
-Circle  : motor stop / coast
+X short : center button (mapped to start/resume)
+X hold  : emergency stop / brake
 Triangle: gyro heading reset
 Options : manual start
 L1+R1   : toggle safe mode
+D-pad Up/Down: arm motor C up/down
+D-pad Left/Right: left button press
+Circle  : force sensor trigger
 ```
 
 The default input tuning in `ps5_controller.yaml` is GTA5-like: trigger

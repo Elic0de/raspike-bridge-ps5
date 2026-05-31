@@ -89,13 +89,20 @@ def configure_motors(sock: socket.socket, left_port: int, right_port: int) -> No
     send_and_wait_ack(sock, right_port, RP_CMD_ID_MOT_STU, motor_setup_packet(right_port, direction=0), "MOT_STU right")
 
 
+def configure_motor(sock: socket.socket, port: int, direction: int = 0) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_MOT_CFG, motor_config_packet(port), "MOT_CFG aux")
+    send_and_wait_ack(sock, port, RP_CMD_ID_MOT_STU, motor_setup_packet(port, direction=direction), "MOT_STU aux")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", default="/tmp/raspike.sock")
     parser.add_argument("--event-device")
     parser.add_argument("--left-port", type=port_id, default=port_id("B"))
     parser.add_argument("--right-port", type=port_id, default=port_id("A"))
+    parser.add_argument("--arm-port", type=port_id, default=port_id("C"))
     parser.add_argument("--max-power", type=int, default=60)
+    parser.add_argument("--arm-power", type=int, default=35)
     parser.add_argument("--min-power", type=int, default=10)
     parser.add_argument("--power-step", type=int, default=5)
     parser.add_argument("--rate-hz", type=float, default=30.0)
@@ -121,11 +128,13 @@ def main() -> int:
     publisher = StatePublisher(args.socket, args.left_port, args.right_port, args.log_file)
     if not args.no_configure:
         configure_motors(publisher.sock, args.left_port, args.right_port)
+        configure_motor(publisher.sock, args.arm_port, direction=0)
 
     power_limit = clamp(args.max_power, args.min_power, 100)
     safe_mode = False
     emergency = False
     last_power: tuple[int, int] | None = None
+    last_arm_power: int | None = None
     interval = 1.0 / args.rate_hz
 
     mixer = DriveMixer(
@@ -177,9 +186,23 @@ def main() -> int:
                         publisher.sock.sendall(gyro_reset_packet())
                     elif action == "start":
                         emergency = False
+                    elif action == "center_button":
+                        # RasPike control loop has no direct "virtual hub center button"
+                        # packet path, so map center-button intent to start/resume.
+                        emergency = False
                     elif action == "toggle_safe_mode":
                         safe_mode = not safe_mode
                         print(f"safe_mode={'on' if safe_mode else 'off'}")
+                    elif action == "button_left":
+                        publisher.sock.sendall(motor_power_packet(args.arm_port, -args.arm_power))
+                        time.sleep(0.12)
+                        publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
+                        last_arm_power = 0
+                    elif action == "force_sensor_trigger":
+                        publisher.sock.sendall(motor_power_packet(args.arm_port, args.arm_power))
+                        time.sleep(0.12)
+                        publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
+                        last_arm_power = 0
                     elif action == "shutdown":
                         print("shutdown requested")
                         return 0
@@ -193,6 +216,7 @@ def main() -> int:
 
                 throttle = gp.throttle if gp is not None and abs(gp.throttle) > 0.01 else kb.throttle
                 steering = gp.steering if gp is not None and abs(gp.steering) > 0.01 else kb.steering
+                arm = gp.arm if gp is not None and abs(gp.arm) > 0.01 else kb.arm
 
                 dt = max(0.0, now - last_tick_at)
                 last_tick_at = now
@@ -202,11 +226,16 @@ def main() -> int:
                     publisher.publish_power(left, right)
                     publisher.log("drive", throttle=round(throttle_c, 3), steering=round(steering_c, 3), left_pwm=left, right_pwm=right, power_limit=cap)
                     last_power = (left, right)
+                arm_pwm = int(round(clamp(int(arm * args.arm_power), -100, 100)))
+                if arm_pwm != last_arm_power:
+                    publisher.sock.sendall(motor_power_packet(args.arm_port, arm_pwm))
+                    last_arm_power = arm_pwm
 
                 time.sleep(interval)
         finally:
             try:
                 send_stop(publisher.sock, args.left_port, args.right_port)
+                publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
             except Exception:
                 pass
             if gamepad is not None and gamepad.controller is not None:
