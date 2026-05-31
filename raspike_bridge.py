@@ -52,10 +52,13 @@ SPIKE_VERSION = bytes([0, 0, 6])
 RP_CMD_ID_COL_CFG = 0x20
 RP_CMD_ID_FRC_CFG = 0x40
 RP_CMD_ID_MOT_CFG = 0x60
+RP_CMD_ID_MOT_STU = 0x61
+RP_CMD_ID_MOT_RST = 0x62
 RP_CMD_ID_US_CFG = 0x80
 CONFIG_COMMANDS = frozenset(
     {RP_CMD_ID_COL_CFG, RP_CMD_ID_FRC_CFG, RP_CMD_ID_MOT_CFG, RP_CMD_ID_US_CFG}
 )
+RP_MOTOR_STU_INDEX_RESETCOUNT = 4
 
 # Command types (cmd >> 5) that address a port device and therefore require the
 # port to be configured first: COLOR(1), FORCE(2), MOTOR(3), ULTRASONIC(4).
@@ -136,6 +139,7 @@ class Bridge:
         # SPIKE. Subsequent configs for the same pair are answered locally.
         self.configured_cmds: set[tuple[int, int]] = set()
         self.status_configured_cmds: set[tuple[int, int]] | None = None
+        self.status_setup_motor_ports: set[int] = set()
 
     def log(self, message: str) -> None:
         if self.verbose:
@@ -477,6 +481,7 @@ class Bridge:
 
             payload = frame[4:]
             status_configured_cmds: set[tuple[int, int]] = set()
+            status_setup_motor_ports: set[int] = set()
             for i in range(SPIKE_STATUS_PORT_COUNT):
                 offset = ports_offset + i * SPIKE_STATUS_PORT_SIZE
                 status_port = payload[offset + SPIKE_STATUS_PORT_INDEX]
@@ -488,6 +493,8 @@ class Bridge:
                 config_cmd = cmd_type << 5
                 key = (status_port, config_cmd)
                 status_configured_cmds.add(key)
+                if status_cmd == RP_CMD_ID_MOT_STU:
+                    status_setup_motor_ports.add(status_port)
                 if key not in self.configured_cmds:
                     self.configured_cmds.add(key)
                     self.log(
@@ -495,6 +502,7 @@ class Bridge:
                         f"port={status_port} cmd=0x{config_cmd:02x}"
                     )
             self.status_configured_cmds = status_configured_cmds
+            self.status_setup_motor_ports = status_setup_motor_ports
 
     def refresh_config_cache_for_pty_session(self) -> None:
         """Reset stale per-run config cache when libraspike reconnects.
@@ -579,6 +587,14 @@ class Bridge:
                     continue
                 self.configured_cmds.add((port, cmd))
                 forward += frame
+                continue
+
+            if cmd == RP_CMD_ID_MOT_STU and port in self.status_setup_motor_ports:
+                if len(frame) > 4 + RP_MOTOR_STU_INDEX_RESETCOUNT and frame[4 + RP_MOTOR_STU_INDEX_RESETCOUNT]:
+                    forward += bytes([RP_CMD_START, RP_CMD_ID_MOT_RST, 0, port])
+                    self.log(f"translated duplicate motor setup reset for {endpoint.name}: port={port}")
+                self.send_proxy_ack(endpoint, port, cmd)
+                self.log(f"proxy motor setup ack for {endpoint.name}: port={port}")
                 continue
 
             # Any other per-port device command (color/force/motor/ultrasonic)
