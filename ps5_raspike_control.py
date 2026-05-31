@@ -126,9 +126,14 @@ def main() -> int:
 
     cfg = load_config(args.config)
     publisher = StatePublisher(args.socket, args.left_port, args.right_port, args.log_file)
+    arm_enabled = True
     if not args.no_configure:
         configure_motors(publisher.sock, args.left_port, args.right_port)
-        configure_motor(publisher.sock, args.arm_port, direction=0)
+        try:
+            configure_motor(publisher.sock, args.arm_port, direction=0)
+        except Exception as exc:
+            arm_enabled = False
+            print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
 
     power_limit = clamp(args.max_power, args.min_power, 100)
     safe_mode = False
@@ -194,15 +199,17 @@ def main() -> int:
                         safe_mode = not safe_mode
                         print(f"safe_mode={'on' if safe_mode else 'off'}")
                     elif action == "button_left":
-                        publisher.sock.sendall(motor_power_packet(args.arm_port, -args.arm_power))
-                        time.sleep(0.12)
-                        publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
-                        last_arm_power = 0
+                        if arm_enabled:
+                            publisher.sock.sendall(motor_power_packet(args.arm_port, -args.arm_power))
+                            time.sleep(0.12)
+                            publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
+                            last_arm_power = 0
                     elif action == "force_sensor_trigger":
-                        publisher.sock.sendall(motor_power_packet(args.arm_port, args.arm_power))
-                        time.sleep(0.12)
-                        publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
-                        last_arm_power = 0
+                        if arm_enabled:
+                            publisher.sock.sendall(motor_power_packet(args.arm_port, args.arm_power))
+                            time.sleep(0.12)
+                            publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
+                            last_arm_power = 0
                     elif action == "shutdown":
                         print("shutdown requested")
                         return 0
@@ -226,16 +233,18 @@ def main() -> int:
                     publisher.publish_power(left, right)
                     publisher.log("drive", throttle=round(throttle_c, 3), steering=round(steering_c, 3), left_pwm=left, right_pwm=right, power_limit=cap)
                     last_power = (left, right)
-                arm_pwm = int(round(clamp(int(arm * args.arm_power), -100, 100)))
-                if arm_pwm != last_arm_power:
-                    publisher.sock.sendall(motor_power_packet(args.arm_port, arm_pwm))
-                    last_arm_power = arm_pwm
+                if arm_enabled:
+                    arm_pwm = int(round(clamp(int(arm * args.arm_power), -100, 100)))
+                    if arm_pwm != last_arm_power:
+                        publisher.sock.sendall(motor_power_packet(args.arm_port, arm_pwm))
+                        last_arm_power = arm_pwm
 
                 time.sleep(interval)
         finally:
             try:
                 send_stop(publisher.sock, args.left_port, args.right_port)
-                publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
+                if arm_enabled:
+                    publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
             except Exception:
                 pass
             if gamepad is not None and gamepad.controller is not None:
