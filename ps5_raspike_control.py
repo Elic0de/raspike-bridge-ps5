@@ -12,10 +12,15 @@ from ps5_controller.drive_mixer import DriveMixer
 from ps5_controller.input_provider import GamepadProvider, KeyboardProvider
 from ps5_controller.protocol import (
     RP_CMD_ID_ACK,
+    RP_CMD_ID_FRC_CFG,
     RP_CMD_ID_MOT_CFG,
     RP_CMD_ID_MOT_STU,
+    bridge_virtual_button_packet,
+    bridge_virtual_force_packet,
+    force_sensor_config_packet,
     gyro_reset_packet,
     motor_config_packet,
+    motor_power_packet,
     motor_setup_packet,
     send_brake,
     send_stop,
@@ -94,6 +99,10 @@ def configure_motor(sock: socket.socket, port: int, direction: int = 0) -> None:
     send_and_wait_ack(sock, port, RP_CMD_ID_MOT_STU, motor_setup_packet(port, direction=direction), "MOT_STU aux")
 
 
+def configure_force_sensor(sock: socket.socket, port: int) -> None:
+    send_and_wait_ack(sock, port, RP_CMD_ID_FRC_CFG, force_sensor_config_packet(port), "FRC_CFG")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--socket", default="/tmp/raspike.sock")
@@ -101,6 +110,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--left-port", type=port_id, default=port_id("B"))
     parser.add_argument("--right-port", type=port_id, default=port_id("A"))
     parser.add_argument("--arm-port", type=port_id, default=port_id("C"))
+    parser.add_argument("--force-port", type=port_id, default=port_id("D"))
     parser.add_argument("--max-power", type=int, default=60)
     parser.add_argument("--arm-power", type=int, default=35)
     parser.add_argument("--min-power", type=int, default=10)
@@ -134,6 +144,13 @@ def main() -> int:
         except Exception as exc:
             arm_enabled = False
             print(f"warning: arm motor init skipped on port {args.arm_port} ({exc})", file=sys.stderr)
+    force_enabled = True
+    if not args.no_configure:
+        try:
+            configure_force_sensor(publisher.sock, args.force_port)
+        except Exception as exc:
+            force_enabled = False
+            print(f"warning: force sensor init skipped on port {args.force_port} ({exc})", file=sys.stderr)
 
     power_limit = clamp(args.max_power, args.min_power, 100)
     safe_mode = False
@@ -164,9 +181,11 @@ def main() -> int:
     with KeyboardProvider(enabled=keyboard_enabled, cfg=cfg) as keyboard:
         last_tick_at = time.monotonic()
         next_controller_probe_at = 0.0
+        last_force_touched = False
         try:
             while True:
                 now = time.monotonic()
+                publisher.poll_status()
 
                 if gamepad is not None and now >= next_controller_probe_at and not gamepad.ensure_connected():
                     if args.verbose:
@@ -176,6 +195,11 @@ def main() -> int:
                 actions |= keyboard.poll_actions(now)
                 if gamepad is not None:
                     actions |= gamepad.poll_actions(now)
+                if force_enabled:
+                    touched = publisher.force_touched(args.force_port)
+                    if touched and not last_force_touched:
+                        actions.add("force_sensor_trigger")
+                    last_force_touched = touched
 
                 for action in actions:
                     if action == "emergency_stop":
@@ -192,18 +216,16 @@ def main() -> int:
                     elif action == "start":
                         emergency = False
                     elif action == "center_button":
-                        # RasPike control loop has no direct "virtual hub center button"
-                        # packet path, so map center-button intent to start/resume.
-                        emergency = False
+                        publisher.sock.sendall(bridge_virtual_button_packet(0x10, duration_ms=120))
                     elif action == "toggle_safe_mode":
                         safe_mode = not safe_mode
                         print(f"safe_mode={'on' if safe_mode else 'off'}")
                     elif action == "button_left":
-                        if arm_enabled:
-                            publisher.sock.sendall(motor_power_packet(args.arm_port, -args.arm_power))
-                            time.sleep(0.12)
-                            publisher.sock.sendall(motor_power_packet(args.arm_port, 0))
-                            last_arm_power = 0
+                        publisher.sock.sendall(bridge_virtual_button_packet(0x08, duration_ms=120))
+                    elif action == "virtual_force_touch":
+                        publisher.sock.sendall(
+                            bridge_virtual_force_packet(args.force_port, touched=True, duration_ms=120)
+                        )
                     elif action == "force_sensor_trigger":
                         if arm_enabled:
                             publisher.sock.sendall(motor_power_packet(args.arm_port, args.arm_power))

@@ -67,6 +67,9 @@ SPIKE_STATUS_PORT_COUNT = 6
 SPIKE_STATUS_PORT_SIZE = 16
 SPIKE_STATUS_PORT_INDEX = 0
 SPIKE_STATUS_PORT_CMD_INDEX = 1
+SPIKE_STATUS_BUTTON_OFFSET = 36
+RP_CMD_ID_BRIDGE_VBUTTON = 0xF0
+RP_CMD_ID_BRIDGE_VFORCE = 0xF1
 
 
 def termios_baud_rates() -> dict[int, int]:
@@ -124,6 +127,9 @@ class Bridge:
         self.serial_writer_fd: int | None = None
         self.serial_writer_until = 0.0
         self.last_pty_write_at = 0.0
+        self.virtual_button_bits = 0
+        self.virtual_button_until = 0.0
+        self.virtual_force_until = [0.0] * SPIKE_STATUS_PORT_COUNT
         # (port, cmd) pairs whose config has already been forwarded to the real
         # SPIKE. Subsequent configs for the same pair are answered locally.
         self.configured_cmds: set[tuple[int, int]] = set()
@@ -330,6 +336,7 @@ class Bridge:
             if not frames:
                 return
             self.learn_configured_cmds_from_status(frames)
+            frames = self.apply_virtual_inputs(frames)
             self.queue_write(self.ptym, frames)
             for client in list(self.clients.values()):
                 self.queue_write(client, frames)
@@ -400,7 +407,36 @@ class Bridge:
         if not frames:
             return
         self.learn_configured_cmds_from_status(frames)
+        frames = self.apply_virtual_inputs(frames)
         self.queue_write(self.ptym, frames)
+
+    def apply_virtual_inputs(self, frames: bytes) -> bytes:
+        now = time.monotonic()
+        if now >= self.virtual_button_until:
+            self.virtual_button_bits = 0
+        virtual_force_ports = {idx for idx, until in enumerate(self.virtual_force_until) if now < until}
+        if self.virtual_button_bits == 0 and not virtual_force_ports:
+            return frames
+
+        out = bytearray()
+        for frame in self.iter_frames(frames):
+            if frame[1] != RP_CMD_ID_ALL_STATUS or frame[3] != RP_PORT_NONE:
+                out += frame
+                continue
+            mutable = bytearray(frame)
+            if frame[2] >= (SPIKE_STATUS_BUTTON_OFFSET + 4) and self.virtual_button_bits:
+                bits_offset = 4 + SPIKE_STATUS_BUTTON_OFFSET
+                current = struct.unpack_from("<I", mutable, bits_offset)[0]
+                struct.pack_into("<I", mutable, bits_offset, current | self.virtual_button_bits)
+            if frame[2] >= (SPIKE_STATUS_PORTS_OFFSET + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE) and virtual_force_ports:
+                for i in range(SPIKE_STATUS_PORT_COUNT):
+                    base = 4 + SPIKE_STATUS_PORTS_OFFSET + i * SPIKE_STATUS_PORT_SIZE
+                    status_port = mutable[base + SPIKE_STATUS_PORT_INDEX]
+                    if status_port in virtual_force_ports:
+                        force_idx = base + 4 + 8
+                        mutable[force_idx] = 1
+            out += mutable
+        return bytes(out)
 
     def learn_configured_cmds_from_status(self, frames: bytes) -> None:
         """Infer already-configured devices from SPIKE status frames.
@@ -475,6 +511,28 @@ class Bridge:
             cmd = frame[1]
             port = frame[3]
             cmd_type = cmd >> 5
+
+            if cmd == RP_CMD_ID_BRIDGE_VBUTTON:
+                if len(frame) >= 10:
+                    button_bits, duration_ms = struct.unpack("<IH", frame[4:10])
+                    self.virtual_button_bits = button_bits
+                    self.virtual_button_until = time.monotonic() + (duration_ms / 1000.0)
+                    self.log(
+                        f"virtual button pulse from {endpoint.name}: bits=0x{button_bits:08x} "
+                        f"duration_ms={duration_ms}"
+                    )
+                continue
+
+            if cmd == RP_CMD_ID_BRIDGE_VFORCE:
+                if len(frame) >= 8:
+                    force_port, touched, duration_ms = struct.unpack("<BBH", frame[4:8])
+                    if 0 <= force_port < SPIKE_STATUS_PORT_COUNT and touched:
+                        self.virtual_force_until[force_port] = time.monotonic() + (duration_ms / 1000.0)
+                        self.log(
+                            f"virtual force pulse from {endpoint.name}: port={force_port} "
+                            f"duration_ms={duration_ms}"
+                        )
+                continue
 
             if cmd in CONFIG_COMMANDS:
                 # *_CFG: forward the first one (and remember it), proxy the rest.

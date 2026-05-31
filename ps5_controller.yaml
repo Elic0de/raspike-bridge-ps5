@@ -20,7 +20,7 @@ bindings:
 
   BTN_EAST:
     press:
-      action: force_sensor_trigger
+      action: virtual_force_touch
 
   space:
     press:
@@ -34,6 +34,9 @@ bindings:
   c:
     press:
       action: coast_stop
+  f:
+    press:
+      action: virtual_force_touch
 
 input:
   deadzone: 0.06

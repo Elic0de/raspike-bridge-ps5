@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import json
 import socket
+import struct
 import time
 from pathlib import Path
 
-from .protocol import RP_CMD_INIT, RP_CMD_INIT_MAGIC, motor_power_packet
+from .protocol import RP_CMD_ID_ALL_STATUS, RP_CMD_INIT, RP_CMD_INIT_MAGIC, motor_power_packet
 
 _HANDSHAKE_TIMEOUT = 3.0
 _VERSION_LEN = 3
 _CONNECT_TIMEOUT = 15.0
+_STATUS_PORTS_OFFSET = 40
+_STATUS_PORT_SIZE = 16
+_STATUS_PORT_COUNT = 6
+_STATUS_BUTTON_OFFSET = 36
+_PORT_DATA_OFFSET = 4
+_FORCE_TOUCHED_INDEX = 8
 
 
 class StatePublisher:
@@ -20,6 +27,9 @@ class StatePublisher:
         self.left_port = left_port
         self.right_port = right_port
         self.log_path = Path(log_file)
+        self._rx_buf = bytearray()
+        self._button_bits = 0
+        self._force_touched = [False] * _STATUS_PORT_COUNT
 
     def _connect(self, socket_path: str) -> socket.socket:
         # The bridge only creates the socket after its (possibly several second)
@@ -69,6 +79,56 @@ class StatePublisher:
             motor_power_packet(self.left_port, left)
             + motor_power_packet(self.right_port, right)
         )
+
+    def poll_status(self) -> None:
+        while True:
+            try:
+                chunk = self.sock.recv(4096)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            self._rx_buf.extend(chunk)
+        self._parse_frames()
+
+    def button_bits(self) -> int:
+        return self._button_bits
+
+    def force_touched(self, port: int) -> bool:
+        if 0 <= port < len(self._force_touched):
+            return self._force_touched[port]
+        return False
+
+    def _parse_frames(self) -> None:
+        buf = self._rx_buf
+        while buf:
+            if buf[0] != 0xEA:
+                del buf[0]
+                continue
+            if len(buf) < 4:
+                return
+            cmd = buf[1]
+            size = buf[2]
+            total = 4 + size
+            if len(buf) < total:
+                return
+            payload = bytes(buf[4:total])
+            del buf[:total]
+            if cmd == RP_CMD_ID_ALL_STATUS:
+                self._update_status(payload)
+
+    def _update_status(self, payload: bytes) -> None:
+        min_len = _STATUS_PORTS_OFFSET + _STATUS_PORT_COUNT * _STATUS_PORT_SIZE
+        if len(payload) < min_len:
+            return
+        self._button_bits = struct.unpack_from("<I", payload, _STATUS_BUTTON_OFFSET)[0]
+        for i in range(_STATUS_PORT_COUNT):
+            off = _STATUS_PORTS_OFFSET + i * _STATUS_PORT_SIZE
+            port = payload[off]
+            if port >= _STATUS_PORT_COUNT:
+                continue
+            touched = payload[off + _PORT_DATA_OFFSET + _FORCE_TOUCHED_INDEX] != 0
+            self._force_touched[port] = touched
 
     def log(self, kind: str, **fields: object) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)

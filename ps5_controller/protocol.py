@@ -11,12 +11,15 @@ RP_PORT_NONE = 255
 RP_CMD_ID_ALL_STATUS = 0x01
 RP_CMD_ID_ACK = 0x02
 
+RP_CMD_ID_FRC_CFG = 0x40
 RP_CMD_ID_MOT_CFG = 0x60
 RP_CMD_ID_MOT_STU = 0x61
 RP_CMD_ID_MOT_POW = 0x64
 RP_CMD_ID_MOT_STP = 0x65
 RP_CMD_ID_MOT_STP_BRK = 0x66
 RP_CMD_ID_HUB_IMU_RST_HDG = 0xB5
+RP_CMD_ID_BRIDGE_VBUTTON = 0xF0
+RP_CMD_ID_BRIDGE_VFORCE = 0xF1
 
 
 def make_packet(port: int, cmd: int, payload: bytes = b"") -> bytes:
@@ -25,6 +28,9 @@ def make_packet(port: int, cmd: int, payload: bytes = b"") -> bytes:
 
 def motor_config_packet(port: int) -> bytes:
     return make_packet(port, RP_CMD_ID_MOT_CFG)
+
+def force_sensor_config_packet(port: int) -> bytes:
+    return make_packet(port, RP_CMD_ID_FRC_CFG)
 
 
 def motor_setup_packet(port: int, direction: int = 0, reset_count: bool = True) -> bytes:
@@ -46,6 +52,18 @@ def motor_brake_packet(port: int) -> bytes:
 
 def gyro_reset_packet() -> bytes:
     return make_packet(RP_PORT_NONE, RP_CMD_ID_HUB_IMU_RST_HDG)
+
+
+def bridge_virtual_button_packet(button_bits: int, duration_ms: int = 120) -> bytes:
+    # Bridge-local command: emulate hub button bits for a short pulse.
+    payload = struct.pack("<IH", button_bits & 0xFFFFFFFF, max(0, min(duration_ms, 5000)))
+    return make_packet(RP_PORT_NONE, RP_CMD_ID_BRIDGE_VBUTTON, payload)
+
+
+def bridge_virtual_force_packet(port: int, touched: bool = True, duration_ms: int = 120) -> bytes:
+    # Bridge-local command: emulate force sensor touch state for a short pulse.
+    payload = struct.pack("<BBH", port & 0xFF, 1 if touched else 0, max(0, min(duration_ms, 5000)))
+    return make_packet(RP_PORT_NONE, RP_CMD_ID_BRIDGE_VFORCE, payload)
 
 
 def send_stop(sock: socket.socket, left_port: int, right_port: int) -> None:

@@ -70,6 +70,8 @@ python3 ps5_raspike_control.py \
   --socket /tmp/raspike.sock \
   --left-port B \
   --right-port A \
+  --arm-port C \
+  --force-port D \
   --max-power 60 \
   --config ./ps5_controller.yaml \
   -v
@@ -97,6 +99,7 @@ space   : emergency stop / brake
 r       : gyro reset
 Enter   : start
 c       : motor stop / coast
+f       : virtual force sensor touch
 ```
 
 ## Controls
@@ -105,7 +108,7 @@ c       : motor stop / coast
 L stick : steering
 R2      : accelerator
 L2      : brake / reverse
-X short : center button (mapped to start/resume)
+X short : center button
 X hold  : emergency stop / brake
 Triangle: gyro heading reset
 Options : manual start
@@ -113,6 +116,9 @@ L1+R1   : toggle safe mode
 D-pad Up/Down: arm motor C up/down
 D-pad Left/Right: left button press
 Circle  : force sensor trigger
+Hub left button: left-button action
+Hub center button: center-button action
+Force sensor touch on `--force-port`: force-sensor trigger action
 ```
 
 The default input tuning in `ps5_controller.yaml` is GTA5-like: trigger
