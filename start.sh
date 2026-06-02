@@ -25,6 +25,10 @@ ULTRASONIC_PORT="${RASPIKE_ULTRASONIC_PORT:-F}"
 INIT_DELAY_SEC="${RASPIKE_INIT_DELAY_SEC:-0.2}"
 INIT_RETRIES="${RASPIKE_INIT_RETRIES:-2}"
 INIT_ORDER="${RASPIKE_INIT_ORDER:-arm-first}"
+CONTROL_API_ENABLED="${RASPIKE_CONTROL_API_ENABLED:-true}"
+CONTROL_API_RESTART="${RASPIKE_CONTROL_API_RESTART:-true}"
+CONTROL_API_DIR="${RASPIKE_CONTROL_API_DIR:-$SCRIPT_DIR/../etrobo2026/raspi}"
+CONTROL_API_STARTED=0
 
 PS5_ARGS=(
     --event-device /dev/input/event4
@@ -71,10 +75,42 @@ esac
 cleanup() {
     echo ""
     echo "Stopping..."
-    kill "$BRIDGE_PID" 2>/dev/null
-    wait "$BRIDGE_PID" 2>/dev/null
+    if [ -n "${BRIDGE_PID:-}" ]; then
+        kill "$BRIDGE_PID" 2>/dev/null || true
+        wait "$BRIDGE_PID" 2>/dev/null || true
+    fi
+    if [ "$CONTROL_API_STARTED" = "1" ]; then
+        make -C "$CONTROL_API_DIR" api-stop 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT INT TERM
+
+start_control_api() {
+    case "${CONTROL_API_ENABLED,,}" in
+        ""|"0"|"false"|"no"|"off"|"disable"|"disabled")
+            return
+            ;;
+    esac
+
+    if [ ! -f "$CONTROL_API_DIR/Makefile" ]; then
+        echo "[warn] Control API dir not found: $CONTROL_API_DIR" >&2
+        return
+    fi
+
+    if [ "${CONTROL_API_RESTART,,}" = "true" ]; then
+        make -C "$CONTROL_API_DIR" api-stop 2>/dev/null || true
+        CONTROL_API_STARTED=1
+    else
+        if ! make -C "$CONTROL_API_DIR" api-status 2>/dev/null | grep -q "raspi api running"; then
+            CONTROL_API_STARTED=1
+        fi
+    fi
+
+    ETROBO_CAMERA_STREAM_ENABLED=true make -C "$CONTROL_API_DIR" api
+    echo "Control API camera stream: http://raspi.local:8080/stream.mjpg"
+}
+
+start_control_api
 
 python3 raspike_bridge.py \
     --serial /dev/ttyACM0 \
