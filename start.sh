@@ -85,6 +85,10 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+camera_stream_host() {
+    hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1
+}
+
 start_control_api() {
     case "${CONTROL_API_ENABLED,,}" in
         ""|"0"|"false"|"no"|"off"|"disable"|"disabled")
@@ -107,7 +111,9 @@ start_control_api() {
     fi
 
     ETROBO_CAMERA_STREAM_ENABLED=true make -C "$CONTROL_API_DIR" api
-    echo "Control API camera stream: http://raspi.local:8080/stream.mjpg"
+    stream_host="$(camera_stream_host)"
+    stream_host="${stream_host:-raspi.local}"
+    echo "Control API camera stream: http://$stream_host:8080/stream.mjpg"
 }
 
 start_control_api
