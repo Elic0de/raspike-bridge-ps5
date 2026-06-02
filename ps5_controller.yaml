@@ -57,10 +57,10 @@ input:
   deadzone: 0.06
   steering_curve: 2.1
   throttle_curve: 1.7
-  steering_gain: 0.78
+  steering_gain: 1.35
   steering_return_speed: 4.5
-  low_speed_steer_gain: 1.0
-  high_speed_steer_gain: 0.36
+  low_speed_steer_gain: 1.35
+  high_speed_steer_gain: 0.75
 
 power:
   slew_rate: 180

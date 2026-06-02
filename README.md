@@ -72,7 +72,7 @@ python3 ps5_raspike_control.py \
   --right-port A \
   --arm-port C \
   --force-port D \
-  --max-power 60 \
+  --max-power 100 \
   --config ./ps5_controller.yaml \
   -v
 ```

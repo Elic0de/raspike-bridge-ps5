@@ -36,10 +36,10 @@ class InputConfig:
     deadzone: float = 0.06
     steering_curve: float = 2.1
     throttle_curve: float = 1.7
-    steering_gain: float = 0.78
+    steering_gain: float = 1.35
     steering_return_speed: float = 4.5
-    low_speed_steer_gain: float = 1.0
-    high_speed_steer_gain: float = 0.36
+    low_speed_steer_gain: float = 1.35
+    high_speed_steer_gain: float = 0.75
 
 
 @dataclass

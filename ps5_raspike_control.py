@@ -174,9 +174,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ultrasonic-port", type=port_id, default=port_id("F"))
     parser.add_argument("--no-color-sensor", action="store_true")
     parser.add_argument("--no-ultrasonic-sensor", action="store_true")
-    parser.add_argument("--max-power", type=int, default=60)
-    parser.add_argument("--arm-power", type=int, default=35)
-    parser.add_argument("--min-power", type=int, default=10)
+    parser.add_argument("--max-power", type=int, default=100)
+    parser.add_argument("--arm-power", type=int, default=30)
+    parser.add_argument("--min-power", type=int, default=50)
     parser.add_argument("--power-step", type=int, default=5)
     parser.add_argument("--rate-hz", type=float, default=30.0)
     parser.add_argument("--init-delay-sec", type=float, default=0.2,
