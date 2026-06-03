@@ -119,8 +119,8 @@ start_control_api() {
 start_control_api
 
 python3 raspike_bridge.py \
-    --serial /dev/ttyACM0 \
-    --pty-link /home/sangi/raspike-tty \
+    --serial /dev/raspike-real \
+    --pty-link /dev/USB_SPIKE \
     --pty-priority-ms 0 \
     --restart-spike-on-signal \
     --restart-spike-on-broken-pipe \
