@@ -425,10 +425,21 @@ class Bridge:
 
         response = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]) + self.spike_version
         if endpoint is self.ptym:
+            self.flush_pty_output(endpoint)
             self.refresh_config_cache_for_pty_session()
         self.queue_write(endpoint, response)
         self.log(f"proxy handshake for {endpoint.name}: req={data[:2].hex()} resp={response.hex()}")
         return data[2:]
+
+    def flush_pty_output(self, endpoint: Endpoint) -> None:
+        """Drop stale status bytes before replying to a new PTY handshake."""
+        endpoint.buffer.clear()
+        if self.pty_slave_fd is None or termios is None:
+            return
+        try:
+            termios.tcflush(self.pty_slave_fd, termios.TCIFLUSH)
+        except termios.error:
+            pass
 
     def extract_frames(self, buf: bytearray) -> bytes:
         """Pull whole RasPike frames out of buf, leaving any partial tail behind."""
