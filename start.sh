@@ -122,6 +122,7 @@ python3 raspike_bridge.py \
     --serial /dev/ttyACM0 \
     --pty-link /home/sangi/raspike-tty \
     --pty-priority-ms 0 \
+    --shutdown-spike-on-signal \
     -v &
 BRIDGE_PID=$!
 
