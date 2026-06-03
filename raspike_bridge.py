@@ -45,7 +45,36 @@ RP_CMD_ID_ACK = 0x02
 RP_CMD_ID_SHT_DWN = 0x03
 RP_CMD_ID_RESTART = 0x04
 RP_PORT_NONE = 0xFF
-SPIKE_VERSION = bytes([0, 0, 6])
+DEFAULT_SPIKE_VERSION = bytes([0, 0, 6])
+SPIKE_VERSION_ENV = "RASPIKE_SPIKE_VERSION"
+SPIKE_VERSION_FILE = Path(__file__).resolve().parent.parent / "spike-rt-RasPike-ART" / "sample" / "raspike" / "spike_version"
+
+
+def parse_spike_version(value: str) -> bytes:
+    parts = value.strip().split(".")
+    if len(parts) != 3:
+        raise ValueError(f"SPIKE version must be major.minor.patch: {value!r}")
+    version = []
+    for part in parts:
+        number = int(part, 10)
+        if not 0 <= number <= 255:
+            raise ValueError(f"SPIKE version component out of range: {value!r}")
+        version.append(number)
+    return bytes(version)
+
+
+def configured_spike_version(override: str | None = None) -> bytes:
+    if override:
+        return parse_spike_version(override)
+
+    env_version = os.environ.get(SPIKE_VERSION_ENV)
+    if env_version:
+        return parse_spike_version(env_version)
+
+    try:
+        return parse_spike_version(SPIKE_VERSION_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        return DEFAULT_SPIKE_VERSION
 
 # *_CFG commands (RP_CMD_TYPE_*<<5 | 0). The SPIKE firmware grabs the port
 # device on these and asserts (red LED) if the same port is configured twice.
@@ -119,6 +148,7 @@ class Bridge:
         restart_spike_on_broken_pipe: bool,
         verbose: bool,
         handshake_timeout_sec: float,
+        spike_version: str | None,
     ):
         self.serial_path = serial_path
         self.pty_link = pty_link
@@ -133,6 +163,7 @@ class Bridge:
         self.restart_spike_on_broken_pipe = restart_spike_on_broken_pipe
         self.verbose = verbose
         self.handshake_timeout_sec = handshake_timeout_sec
+        self.spike_version = configured_spike_version(spike_version)
 
         self.selector = selectors.DefaultSelector()
         self.running = True
@@ -220,6 +251,7 @@ class Bridge:
                 if collecting:
                     version.append(b)
                     if len(version) == 3:
+                        self.spike_version = bytes(version)
                         # Keep anything that trailed the reply for the main loop.
                         self.serial.parse_buf.extend(chunk[i + 1:])
                         self.log(f"SPIKE handshake ok: version={tuple(version)}")
@@ -391,7 +423,7 @@ class Bridge:
         if data[0] != RP_CMD_INIT or data[1] != RP_CMD_INIT_MAGIC:
             return data
 
-        response = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]) + SPIKE_VERSION
+        response = bytes([RP_CMD_INIT, RP_CMD_INIT_MAGIC]) + self.spike_version
         if endpoint is self.ptym:
             self.refresh_config_cache_for_pty_session()
         self.queue_write(endpoint, response)
@@ -477,10 +509,12 @@ class Bridge:
         return bytes(out)
 
     def status_layout(self, payload_size: int) -> tuple[int, int] | None:
-        if payload_size >= SPIKE_STATUS_PORTS_OFFSET + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE:
-            return SPIKE_STATUS_PORTS_OFFSET, SPIKE_STATUS_BUTTON_OFFSET
+        # Check the larger layout first. A 136-byte status frame also satisfies
+        # the 128-byte minimum, but its ports start 8 bytes later.
         if payload_size >= SPIKE_STATUS_PORTS_OFFSET_LEGACY + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE:
             return SPIKE_STATUS_PORTS_OFFSET_LEGACY, SPIKE_STATUS_BUTTON_OFFSET_LEGACY
+        if payload_size >= SPIKE_STATUS_PORTS_OFFSET + SPIKE_STATUS_PORT_COUNT * SPIKE_STATUS_PORT_SIZE:
+            return SPIKE_STATUS_PORTS_OFFSET, SPIKE_STATUS_BUTTON_OFFSET
         return None
 
     def learn_configured_cmds_from_status(self, frames: bytes) -> None:
@@ -825,6 +859,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pty-mode", type=lambda value: int(value, 8), default=0o666)
     parser.add_argument("--no-spike-handshake", action="store_true",
                         help="skip the one-time handshake with the real SPIKE (normally required)")
+    parser.add_argument(
+        "--spike-version",
+        help=f"version to proxy when the real SPIKE handshake is skipped; defaults to ${SPIKE_VERSION_ENV} or spike_version",
+    )
     parser.add_argument("--shutdown-spike-on-signal", action="store_true",
                         help="send RP_CMD_ID_SHT_DWN to the SPIKE when the bridge receives SIGINT/SIGTERM")
     parser.add_argument("--restart-spike-on-signal", action="store_true",
@@ -857,6 +895,7 @@ def main() -> int:
         restart_spike_on_broken_pipe=args.restart_spike_on_broken_pipe,
         verbose=args.verbose,
         handshake_timeout_sec=args.handshake_timeout_sec,
+        spike_version=args.spike_version,
     )
 
     def stop(_signum: int, _frame: object) -> None:

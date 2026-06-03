@@ -175,12 +175,14 @@ class StatePublisher:
                 self._update_status(payload)
 
     def _update_status(self, payload: bytes) -> None:
-        if len(payload) >= _STATUS_PORTS_OFFSET + _STATUS_PORT_COUNT * _STATUS_PORT_SIZE:
-            button_offset = _STATUS_BUTTON_OFFSET
-            ports_offset = _STATUS_PORTS_OFFSET
-        elif len(payload) >= _STATUS_PORTS_OFFSET_LEGACY + _STATUS_PORT_COUNT * _STATUS_PORT_SIZE:
+        # Check the larger layout first. A 136-byte status frame also satisfies
+        # the 128-byte minimum, but its ports start 8 bytes later.
+        if len(payload) >= _STATUS_PORTS_OFFSET_LEGACY + _STATUS_PORT_COUNT * _STATUS_PORT_SIZE:
             button_offset = _STATUS_BUTTON_OFFSET_LEGACY
             ports_offset = _STATUS_PORTS_OFFSET_LEGACY
+        elif len(payload) >= _STATUS_PORTS_OFFSET + _STATUS_PORT_COUNT * _STATUS_PORT_SIZE:
+            button_offset = _STATUS_BUTTON_OFFSET
+            ports_offset = _STATUS_PORTS_OFFSET
         else:
             return
 

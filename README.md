@@ -63,6 +63,11 @@ When `libraspike` is connected through the PTY, do not pass
 itself. Use `--spike-handshake` only when running socket clients without
 `libraspike`.
 
+The bridge proxies later client handshakes using the version read from the real
+SPIKE during startup. If you skip the real SPIKE handshake, set the version with
+`--spike-version 0.0.6` or `RASPIKE_SPIKE_VERSION=0.0.6`; otherwise it falls
+back to `../spike-rt-RasPike-ART/sample/raspike/spike_version`.
+
 Start PS5 control:
 
 ```bash
