@@ -121,31 +121,26 @@ python3 ps5_raspike_control.py \
   --web-control-port 8766
 ```
 
-If you use `start.sh` on the RasPi, pass the PC address through an environment
-variable. `start.sh` exposes Web control on the RasPi LAN interface by default:
+If you use `start.sh` on the RasPi, it starts only the bridge and PS5 control
+process. `start.sh` exposes Web control on the RasPi LAN interface by default:
+
+```bash
+./start.sh
+```
+
+Run `raspike-web-control-v2` separately on the RasPi or a PC. When running it
+on the RasPi, use its production start flow:
+
+```bash
+cd ../raspike-web-control-v2
+RASPIKE_TARGET=remote pnpm build
+RASPIKE_TARGET=remote pnpm start
+```
+
+When the WebUI runs on a separate PC, point telemetry to that PC:
 
 ```bash
 RASPIKE_TELEMETRY_HOST=<PC_IP_ADDRESS> ./start.sh
-```
-
-`start.sh` is the debug entrypoint for using Web Control with the bridge. It
-also starts the ETROBO RasPi Control API with camera streaming enabled, so the
-Web UI can read the shared stream URL:
-
-```text
-http://raspi.local:8080/stream.mjpg
-```
-
-The Control API does not open the camera. The running RasPi main app or a
-Python experiment owns the camera and publishes its latest frame for the API to
-stream. By default `start.sh` restarts the Control API so the camera stream
-flag is applied. Set `RASPIKE_CONTROL_API_RESTART=false` to keep an already
-running API, or `RASPIKE_CONTROL_API_ENABLED=false` to skip API startup.
-
-If the ETROBO repo is not next to this bridge repo, set:
-
-```bash
-RASPIKE_CONTROL_API_DIR=/path/to/etrobo2026/raspi ./start.sh
 ```
 
 `start.sh` also accepts `RASPIKE_LEFT_PORT`, `RASPIKE_RIGHT_PORT`,
