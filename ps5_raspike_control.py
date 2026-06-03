@@ -24,6 +24,7 @@ from ps5_controller.protocol import (
     color_sensor_mode_packet,
     force_sensor_config_packet,
     gyro_reset_packet,
+    hub_restart_packet,
     motor_config_packet,
     motor_power_packet,
     motor_setup_packet,
@@ -349,6 +350,10 @@ def main() -> int:
                         )
                     elif action == "shutdown":
                         print("shutdown requested")
+                        return 0
+                    elif action == "restart":
+                        print("restart requested")
+                        publisher.sock.sendall(hub_restart_packet())
                         return 0
 
                 if emergency:

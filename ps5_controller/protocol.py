@@ -10,6 +10,7 @@ RP_PORT_NONE = 255
 
 RP_CMD_ID_ALL_STATUS = 0x01
 RP_CMD_ID_ACK = 0x02
+RP_CMD_ID_RESTART = 0x04
 
 RP_CMD_ID_COL_CFG = 0x20
 RP_CMD_ID_COL_RGB = 0x21
@@ -72,6 +73,10 @@ def motor_brake_packet(port: int) -> bytes:
 
 def gyro_reset_packet() -> bytes:
     return make_packet(RP_PORT_NONE, RP_CMD_ID_HUB_IMU_RST_HDG)
+
+
+def hub_restart_packet() -> bytes:
+    return make_packet(RP_PORT_NONE, RP_CMD_ID_RESTART)
 
 
 def bridge_virtual_button_packet(button_bits: int, duration_ms: int = 120) -> bytes:
