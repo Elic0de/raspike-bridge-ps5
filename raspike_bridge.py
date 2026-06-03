@@ -43,6 +43,7 @@ RP_CMD_START = 0xEA
 RP_CMD_ID_ALL_STATUS = 0x01
 RP_CMD_ID_ACK = 0x02
 RP_CMD_ID_SHT_DWN = 0x03
+RP_CMD_ID_RESTART = 0x04
 RP_PORT_NONE = 0xFF
 SPIKE_VERSION = bytes([0, 0, 6])
 
@@ -114,6 +115,8 @@ class Bridge:
         pty_mode: int,
         spike_handshake: bool,
         shutdown_spike_on_signal: bool,
+        restart_spike_on_signal: bool,
+        restart_spike_on_broken_pipe: bool,
         verbose: bool,
         handshake_timeout_sec: float,
     ):
@@ -126,13 +129,16 @@ class Bridge:
         self.pty_mode = pty_mode
         self.spike_handshake = spike_handshake
         self.shutdown_spike_on_signal = shutdown_spike_on_signal
+        self.restart_spike_on_signal = restart_spike_on_signal
+        self.restart_spike_on_broken_pipe = restart_spike_on_broken_pipe
         self.verbose = verbose
         self.handshake_timeout_sec = handshake_timeout_sec
 
         self.selector = selectors.DefaultSelector()
         self.running = True
         self.stop_by_signal = False
-        self.shutdown_sent = False
+        self.stop_by_broken_pipe = False
+        self.system_command_sent = False
         self.clients: dict[int, Endpoint] = {}
         self.ptym: Endpoint | None = None
         self.pty_slave_fd: int | None = None
@@ -702,6 +708,10 @@ class Bridge:
         except OSError as exc:
             if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
                 return
+            if exc.errno == errno.EPIPE:
+                self.log(f"broken pipe on {endpoint.name}")
+                self.stop_by_broken_pipe = True
+                self.running = False
             self.close_endpoint(endpoint)
             return
 
@@ -735,11 +745,11 @@ class Bridge:
 
         self.log(f"closed {endpoint.name}")
 
-    def request_spike_shutdown(self) -> None:
-        if self.shutdown_sent or self.serial is None:
+    def request_spike_system_command(self, cmd: int, label: str) -> None:
+        if self.system_command_sent or self.serial is None:
             return
-        self.shutdown_sent = True
-        packet = bytes([RP_CMD_START, RP_CMD_ID_SHT_DWN, 0, RP_PORT_NONE])
+        self.system_command_sent = True
+        packet = bytes([RP_CMD_START, cmd, 0, RP_PORT_NONE])
         deadline = time.monotonic() + 0.3
         offset = 0
         while offset < len(packet) and time.monotonic() < deadline:
@@ -749,21 +759,31 @@ class Bridge:
                 time.sleep(0.01)
             except OSError as exc:
                 if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
-                    self.log(f"failed to send SPIKE shutdown command: {exc}")
+                    self.log(f"failed to send SPIKE {label} command: {exc}")
                     return
                 time.sleep(0.01)
         if offset == len(packet):
-            self.log("sent SPIKE shutdown command")
+            self.log(f"sent SPIKE {label} command")
             try:
                 termios.tcdrain(self.serial.fd)
             except (AttributeError, OSError):
                 pass
         else:
-            self.log("timed out sending SPIKE shutdown command")
+            self.log(f"timed out sending SPIKE {label} command")
+
+    def request_spike_shutdown(self) -> None:
+        self.request_spike_system_command(RP_CMD_ID_SHT_DWN, "shutdown")
+
+    def request_spike_restart(self) -> None:
+        self.request_spike_system_command(RP_CMD_ID_RESTART, "restart")
 
     def cleanup(self) -> None:
-        if self.shutdown_spike_on_signal and self.stop_by_signal:
+        if self.restart_spike_on_signal and self.stop_by_signal:
+            self.request_spike_restart()
+        elif self.shutdown_spike_on_signal and self.stop_by_signal:
             self.request_spike_shutdown()
+        elif self.restart_spike_on_broken_pipe and self.stop_by_broken_pipe:
+            self.request_spike_restart()
 
         for endpoint in [self.serial, self.ptym, *list(self.clients.values())]:
             if endpoint is not None:
@@ -807,6 +827,10 @@ def parse_args() -> argparse.Namespace:
                         help="skip the one-time handshake with the real SPIKE (normally required)")
     parser.add_argument("--shutdown-spike-on-signal", action="store_true",
                         help="send RP_CMD_ID_SHT_DWN to the SPIKE when the bridge receives SIGINT/SIGTERM")
+    parser.add_argument("--restart-spike-on-signal", action="store_true",
+                        help="send RP_CMD_ID_RESTART to the SPIKE when the bridge receives SIGINT/SIGTERM")
+    parser.add_argument("--restart-spike-on-broken-pipe", action="store_true",
+                        help="send RP_CMD_ID_RESTART to the SPIKE when the bridge hits EPIPE while writing")
     parser.add_argument("--handshake-timeout-sec", type=float, default=10.0)
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser.parse_args()
@@ -829,6 +853,8 @@ def main() -> int:
         pty_mode=args.pty_mode,
         spike_handshake=not args.no_spike_handshake,
         shutdown_spike_on_signal=args.shutdown_spike_on_signal,
+        restart_spike_on_signal=args.restart_spike_on_signal,
+        restart_spike_on_broken_pipe=args.restart_spike_on_broken_pipe,
         verbose=args.verbose,
         handshake_timeout_sec=args.handshake_timeout_sec,
     )
